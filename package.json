@@ -4,6 +4,6 @@
   "description": "Your project's living memory.",
   "main": "index.js",
   "keywords": ["cli", "developer-tools", "context"],
-  "author": "your-npm-username",
+  "author": "justpriyanshu",
   "license": "MIT"
 }
