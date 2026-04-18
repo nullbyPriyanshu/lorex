@@ -81,13 +81,34 @@ function getTopDependencies(
 
 function formatStackSection(packageInfo: PackageInfo): string {
   const lines: string[] = [];
+  const stack = packageInfo.stack || [];
+
+  if (stack.length === 0) {
+    lines.push('- **Runtime:** Vanilla HTML/CSS/JS');
+    return lines.join('\n');
+  }
+
+  const hasNode = stack.includes('Node.js');
+  const hasTypeScript = stack.includes('TypeScript');
+  const runtime = hasNode
+    ? hasTypeScript
+      ? 'Node.js + TypeScript'
+      : 'Node.js'
+    : hasTypeScript
+    ? 'TypeScript'
+    : 'Vanilla HTML/CSS/JS';
+
+  lines.push(`- **Runtime:** ${runtime}`);
+
+  const stackDetails = stack.filter((item) => item !== 'Node.js' && item !== 'TypeScript');
+  if (stackDetails.length > 0) {
+    lines.push(`- **Stack:** ${stackDetails.join(', ')}`);
+  }
+
   const deps = {
     ...packageInfo.dependencies,
     ...packageInfo.devDependencies,
   };
-
-  const runtime = deps['typescript'] ? 'Node.js + TypeScript' : 'Node.js';
-  lines.push(`- **Runtime:** ${runtime}`);
 
   // Framework
   const frameworks = [];

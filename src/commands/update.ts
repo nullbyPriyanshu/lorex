@@ -61,9 +61,10 @@ export async function updateCommand() {
     logger.success(`Documentation updated at ${chalk.bold(loremPath)}`);
     console.log('');
     outro(chalk.cyan('✨ All done!'));
-    process.exit(0);
   } catch (error) {
     logger.error(`Error updating: ${error}`);
     process.exit(1);
   }
+
+  process.exit(0);
 }

@@ -60,10 +60,11 @@ export async function initCommand() {
     logger.success(`Documentation created at ${chalk.bold(outputPath)}`);
     console.log('');
     outro(chalk.cyan('✨ All done! Run "lorex show" to view your documentation.'));
-    process.exit(0);
   } catch (error) {
     spinner.fail(chalk.red('Error scanning project'));
     logger.error(String(error));
     process.exit(1);
   }
+
+  process.exit(0);
 }

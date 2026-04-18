@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import glob from 'glob';
 
 export interface PackageInfo {
   name: string;
@@ -10,26 +11,62 @@ export interface PackageInfo {
   stack: string[];
 }
 
-function detectStackFromFiles(): string[] {
-  const cwd = process.cwd();
-  const files = fs.readdirSync(cwd);
+function detectStackFromFiles(root: string): string[] {
   const stack: string[] = [];
 
-  if (files.some(f => f.endsWith('.html'))) stack.push('Vanilla HTML');
-  if (files.some(f => f.endsWith('.css'))) stack.push('CSS');
-  if (files.includes('tailwind.config.js') || files.includes('tailwind.config.ts')) {
-    // Replace CSS with Tailwind CSS
+  const htmlFiles = glob.sync('**/*.html', {
+    cwd: root,
+    ignore: ['node_modules/**'],
+  });
+  const cssFiles = glob.sync('**/*.css', {
+    cwd: root,
+    ignore: ['node_modules/**'],
+  });
+  const reactFiles = glob.sync('**/*.{jsx,tsx}', {
+    cwd: root,
+    ignore: ['node_modules/**'],
+  });
+
+  if (htmlFiles.length > 0) stack.push('Vanilla HTML');
+  if (cssFiles.length > 0) stack.push('CSS');
+
+  const tailwindConfig = fs.existsSync(path.join(root, 'tailwind.config.js')) ||
+    fs.existsSync(path.join(root, 'tailwind.config.ts'));
+  if (tailwindConfig) {
     const cssIndex = stack.indexOf('CSS');
-    if (cssIndex !== -1) stack[cssIndex] = 'Tailwind CSS';
-    else stack.push('Tailwind CSS');
+    if (cssIndex !== -1) {
+      stack[cssIndex] = 'Tailwind CSS';
+    } else {
+      stack.push('Tailwind CSS');
+    }
   }
-  if (files.includes('vite.config.js') || files.includes('vite.config.ts')) stack.push('Vite');
+
+  if (fs.existsSync(path.join(root, 'vite.config.js')) || fs.existsSync(path.join(root, 'vite.config.ts'))) {
+    stack.push('Vite');
+  }
+
+  if (fs.existsSync(path.join(root, 'webpack.config.js'))) {
+    stack.push('Webpack');
+  }
+
+  if (reactFiles.length > 0) {
+    stack.push('React');
+  }
+
+  if (fs.existsSync(path.join(root, 'prisma', 'schema.prisma'))) {
+    stack.push('Prisma');
+  }
+
+  if (fs.existsSync(path.join(root, 'tsconfig.json'))) {
+    stack.push('TypeScript');
+  }
 
   return stack;
 }
 
 export function scanPackage(): PackageInfo {
-  const packagePath = path.join(process.cwd(), 'package.json');
+  const root = process.cwd();
+  const packagePath = path.join(root, 'package.json');
   const hasPackageJson = fs.existsSync(packagePath);
 
   let pkg: any = {};
@@ -40,16 +77,14 @@ export function scanPackage(): PackageInfo {
       const content = fs.readFileSync(packagePath, 'utf-8');
       pkg = JSON.parse(content);
     } catch {
-      // If can't parse, treat as no package.json
+      pkg = {};
     }
   }
 
-  const allDeps = {
-    ...pkg.dependencies,
-    ...pkg.devDependencies,
-  };
+  const dependencies = pkg.dependencies || {};
+  const devDependencies = pkg.devDependencies || {};
+  const allDeps = { ...dependencies, ...devDependencies };
 
-  // Detect stack from dependencies
   if (allDeps['next']) stack.push('Next.js');
   if (allDeps['express']) stack.push('Express');
   if (allDeps['@nestjs/core']) stack.push('NestJS');
@@ -57,26 +92,28 @@ export function scanPackage(): PackageInfo {
   if (allDeps['@prisma/client']) stack.push('Prisma');
   if (allDeps['mongoose']) stack.push('MongoDB');
 
-  // Detect from files
-  const fileStack = detectStackFromFiles();
-  stack = stack.concat(fileStack);
+  const fileStack = detectStackFromFiles(root);
+  stack = stack.concat(fileStack.filter((item) => !stack.includes(item)));
 
-  // If no stack detected and has package.json, default to Node.js
-  if (stack.length === 0 && hasPackageJson) {
-    stack.push('Node.js');
+  const hasActualDependencies = Object.keys(allDeps).length > 0;
+  if (stack.length === 0) {
+    if (hasPackageJson && hasActualDependencies) {
+      stack.push('Node.js');
+    } else {
+      stack.push('Vanilla JS');
+    }
   }
 
-  // Determine name
   let name = pkg.name;
   if (!name) {
-    name = path.basename(process.cwd());
+    name = path.basename(root);
   }
 
   return {
     name,
     description: pkg.description || '',
-    dependencies: pkg.dependencies || {},
-    devDependencies: pkg.devDependencies || {},
+    dependencies,
+    devDependencies,
     scripts: pkg.scripts || {},
     stack,
   };
