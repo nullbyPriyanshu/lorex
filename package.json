@@ -2,8 +2,38 @@
   "name": "lorex-cli",
   "version": "0.0.1",
   "description": "Your project's living memory.",
-  "main": "index.js",
-  "keywords": ["cli", "developer-tools", "context"],
+  "main": "dist/index.js",
+  "bin": {
+    "lorex": "./dist/index.js"
+  },
+  "keywords": [
+    "cli",
+    "developer-tools",
+    "context"
+  ],
   "author": "justpriyanshu",
-  "license": "MIT"
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "dependencies": {
+    "@clack/prompts": "^1.2.0",
+    "chalk": "^5.6.2",
+    "clipboardy": "^5.3.1",
+    "commander": "^14.0.3",
+    "glob": "^13.0.6",
+    "ora": "^9.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "nodemon": "^3.1.14",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.3"
+  }
 }
