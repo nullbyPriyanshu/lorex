@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import glob from 'glob';
+import { glob } from 'glob';
 
 export interface PackageInfo {
   name: string;
@@ -9,11 +9,19 @@ export interface PackageInfo {
   devDependencies: Record<string, string>;
   scripts: Record<string, string>;
   stack: string[];
+  projectType: string;
 }
 
-function detectStackFromFiles(root: string): string[] {
-  const stack: string[] = [];
+interface FileDetection {
+  hasApp: boolean;
+  hasPages: boolean;
+  hasHtml: boolean;
+  hasCss: boolean;
+  hasReactFiles: boolean;
+  hasTsConfig: boolean;
+}
 
+function detectFiles(root: string): FileDetection {
   const htmlFiles = glob.sync('**/*.html', {
     cwd: root,
     ignore: ['node_modules/**'],
@@ -27,8 +35,53 @@ function detectStackFromFiles(root: string): string[] {
     ignore: ['node_modules/**'],
   });
 
-  if (htmlFiles.length > 0) stack.push('Vanilla HTML');
-  if (cssFiles.length > 0) stack.push('CSS');
+  return {
+    hasApp: fs.existsSync(path.join(root, 'app')),
+    hasPages: fs.existsSync(path.join(root, 'pages')),
+    hasHtml: htmlFiles.length > 0,
+    hasCss: cssFiles.length > 0,
+    hasReactFiles: reactFiles.length > 0,
+    hasTsConfig: fs.existsSync(path.join(root, 'tsconfig.json')),
+  };
+}
+
+function formatPackageEntry(name: string, version?: string): string {
+  return version ? `${name} ${version}` : name;
+}
+
+function detectStackDependencies(allDeps: Record<string, string>): string[] {
+  const stack: string[] = [];
+  const mapping: Record<string, string> = {
+    next: 'Next.js',
+    express: 'Express',
+    '@nestjs/core': 'NestJS',
+    'socket.io': 'Socket.IO',
+    '@prisma/client': 'Prisma',
+    mongoose: 'MongoDB',
+    react: 'React',
+    vue: 'Vue',
+    svelte: 'Svelte',
+    '@angular/core': 'Angular',
+    vite: 'Vite',
+    webpack: 'Webpack',
+    typescript: 'TypeScript',
+    tailwindcss: 'Tailwind CSS',
+  };
+
+  for (const [pkg, label] of Object.entries(mapping)) {
+    if (allDeps[pkg]) {
+      stack.push(formatPackageEntry(label, allDeps[pkg]));
+    }
+  }
+
+  return stack;
+}
+
+function detectStackFromFiles(root: string, fileInfo: FileDetection): string[] {
+  const stack: string[] = [];
+
+  if (fileInfo.hasHtml) stack.push('Vanilla HTML');
+  if (fileInfo.hasCss) stack.push('CSS');
 
   const tailwindConfig = fs.existsSync(path.join(root, 'tailwind.config.js')) ||
     fs.existsSync(path.join(root, 'tailwind.config.ts'));
@@ -49,7 +102,7 @@ function detectStackFromFiles(root: string): string[] {
     stack.push('Webpack');
   }
 
-  if (reactFiles.length > 0) {
+  if (fileInfo.hasReactFiles) {
     stack.push('React');
   }
 
@@ -57,11 +110,77 @@ function detectStackFromFiles(root: string): string[] {
     stack.push('Prisma');
   }
 
-  if (fs.existsSync(path.join(root, 'tsconfig.json'))) {
+  if (fileInfo.hasTsConfig) {
     stack.push('TypeScript');
   }
 
   return stack;
+}
+
+function detectProjectType(pkg: any, allDeps: Record<string, string>, fileInfo: FileDetection): string {
+  const hasBin = pkg.bin && Object.keys(pkg.bin).length > 0;
+  const hasCliDep = Boolean(
+    allDeps['commander'] ||
+    allDeps['yargs'] ||
+    allDeps['meow'] ||
+    allDeps['oclif'] ||
+    allDeps['caporal']
+  );
+
+  if (hasBin || hasCliDep) {
+    return 'CLI Tool';
+  }
+
+  const hasBackend = Boolean(
+    allDeps['express'] ||
+    allDeps['fastify'] ||
+    allDeps['koa'] ||
+    allDeps['@nestjs/core'] ||
+    allDeps['next'] ||
+    allDeps['@prisma/client'] ||
+    allDeps['mongoose'] ||
+    allDeps['typeorm'] ||
+    allDeps['sequelize']
+  );
+
+  const hasFrontend = Boolean(
+    allDeps['react'] ||
+    allDeps['next'] ||
+    allDeps['vue'] ||
+    allDeps['svelte'] ||
+    allDeps['@angular/core'] ||
+    allDeps['vite'] ||
+    fileInfo.hasApp ||
+    fileInfo.hasPages ||
+    fileInfo.hasHtml ||
+    fileInfo.hasCss ||
+    fileInfo.hasReactFiles
+  );
+
+  const isStaticSite = !hasBackend && (fileInfo.hasHtml || allDeps['vite'] || allDeps['webpack']);
+  const isLibrary = Boolean(pkg.main || pkg.exports || pkg.types || pkg.module);
+
+  if (hasBackend && hasFrontend) {
+    return 'Full-Stack App';
+  }
+
+  if (hasFrontend && !hasBackend) {
+    return isStaticSite ? 'Static Site' : 'Frontend Only';
+  }
+
+  if (hasBackend && !hasFrontend) {
+    return 'Backend API';
+  }
+
+  if (isLibrary) {
+    return 'Library/Package';
+  }
+
+  if (fileInfo.hasHtml) {
+    return 'Static Site';
+  }
+
+  return 'Library/Package';
 }
 
 export function scanPackage(): PackageInfo {
@@ -70,8 +189,6 @@ export function scanPackage(): PackageInfo {
   const hasPackageJson = fs.existsSync(packagePath);
 
   let pkg: any = {};
-  let stack: string[] = [];
-
   if (hasPackageJson) {
     try {
       const content = fs.readFileSync(packagePath, 'utf-8');
@@ -84,16 +201,12 @@ export function scanPackage(): PackageInfo {
   const dependencies = pkg.dependencies || {};
   const devDependencies = pkg.devDependencies || {};
   const allDeps = { ...dependencies, ...devDependencies };
+  const fileInfo = detectFiles(root);
 
-  if (allDeps['next']) stack.push('Next.js');
-  if (allDeps['express']) stack.push('Express');
-  if (allDeps['@nestjs/core']) stack.push('NestJS');
-  if (allDeps['socket.io']) stack.push('Socket.IO');
-  if (allDeps['@prisma/client']) stack.push('Prisma');
-  if (allDeps['mongoose']) stack.push('MongoDB');
-
-  const fileStack = detectStackFromFiles(root);
-  stack = stack.concat(fileStack.filter((item) => !stack.includes(item)));
+  const stackFromDeps = detectStackDependencies(allDeps);
+  const stackFromFiles = detectStackFromFiles(root, fileInfo);
+  const stackSet = new Set([...stackFromDeps, ...stackFromFiles]);
+  const stack = Array.from(stackSet);
 
   const hasActualDependencies = Object.keys(allDeps).length > 0;
   if (stack.length === 0) {
@@ -116,5 +229,6 @@ export function scanPackage(): PackageInfo {
     devDependencies,
     scripts: pkg.scripts || {},
     stack,
+    projectType: detectProjectType(pkg, allDeps, fileInfo),
   };
 }

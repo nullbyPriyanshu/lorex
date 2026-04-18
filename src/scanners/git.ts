@@ -5,6 +5,7 @@ export function scanGit(): string[] {
     const output = execSync('git log --oneline -10', {
       cwd: process.cwd(),
       encoding: 'utf-8',
+      timeout: 3000,
     });
 
     return output

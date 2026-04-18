@@ -1,5 +1,7 @@
 # Lorex 📝
 
+> Your project's living memory - Document everything about your project automatically.
+
 ⚠️ lorex is a CLI tool — install globally for best experience:
 ```bash
 npm install -g lorex-cli
@@ -8,8 +10,6 @@ Or use without installing:
 ```bash
 npx lorex-cli init
 ```
-
-> Your project's living memory - Document everything about your project automatically.
 
 Lorex scans your entire project structure and generates comprehensive documentation in seconds. It detects your tech stack, database models, routes, environment variables, and recent git activity—all without any configuration.
 

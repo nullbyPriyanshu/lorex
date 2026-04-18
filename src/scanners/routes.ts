@@ -2,44 +2,61 @@ import fs from 'fs';
 import path from 'path';
 import { glob } from 'glob';
 
+function normalizeRoute(route: string): string {
+  const clean = route
+    .replace(/\\/g, '/')
+    .replace(/\/(page|route)\.(tsx?|jsx?)$/, '')
+    .replace(/\/+$/, '')
+    .replace(/\/?\([^/]+?\)/g, '')
+    .replace(/\/@[^/]+/g, '')
+    .replace(/\/index$/, '');
+
+  if (clean === '' || clean === '/') {
+    return '/';
+  }
+
+  return clean.startsWith('/') ? clean : `/${clean}`;
+}
+
 export async function scanRoutes(): Promise<string[]> {
   try {
     const cwd = process.cwd();
-    const routes: string[] = [];
+    const routes = new Set<string>();
 
-    // Check for Next.js App Router (app folder)
     const appPath = path.join(cwd, 'app');
     if (fs.existsSync(appPath)) {
-      const pages = await glob('**/page.tsx', {
+      const pageFiles = await glob('**/page.{ts,tsx,js,jsx}', {
+        cwd: appPath,
+        ignore: ['**/node_modules/**'],
+      });
+      const routeFiles = await glob('**/route.{ts,tsx,js,jsx}', {
         cwd: appPath,
         ignore: ['**/node_modules/**'],
       });
 
-      for (const page of pages) {
-        const routePath = page.replace('/page.tsx', '').replace(/\\/g, '/');
-        routes.push(
-          routePath === '' ? '/' : '/' + routePath.split('/').join('/')
-        );
+      for (const file of [...pageFiles, ...routeFiles]) {
+        routes.add(normalizeRoute(file));
       }
     } else {
-      // Check for Next.js Pages Router (pages folder)
       const pagesPath = path.join(cwd, 'pages');
       if (fs.existsSync(pagesPath)) {
-        const pages = await glob('**/*.{tsx,ts}', {
+        const pages = await glob('**/*.{tsx,ts,jsx,js}', {
           cwd: pagesPath,
-          ignore: ['**/node_modules/**', '**/_*.tsx', '**/_*.ts'],
+          ignore: [
+            '**/node_modules/**',
+            '**/_*.tsx',
+            '**/_*.ts',
+            '**/_*.jsx',
+            '**/_*.js',
+          ],
         });
 
         for (const page of pages) {
-          const routePath = page
-            .replace(/\.(tsx?|jsx?)$/, '')
-            .replace(/\\/g, '/');
-          routes.push(
-            routePath === 'index' ? '/' : '/' + routePath.split('/').join('/')
-          );
+          const routePath = page.replace(/\.(tsx?|jsx?)$/, '').replace(/\\/g, '/');
+          const normalized = routePath === 'index' ? '/' : `/${routePath}`;
+          routes.add(normalized);
         }
       } else {
-        // Check for Express-style routes
         const srcPath = path.join(cwd, 'src');
         if (fs.existsSync(srcPath)) {
           const routeFiles = await glob('**/routes/**/*.{ts,js}', {
@@ -52,14 +69,14 @@ export async function scanRoutes(): Promise<string[]> {
             try {
               const content = fs.readFileSync(filePath, 'utf-8');
               const expressRoutes = content.match(
-                /router\.(get|post|put|delete|patch)\('([^']+)'/g
+                /router\.(get|post|put|delete|patch)\(['"`]([^'"`]+)['"`]/g
               );
 
               if (expressRoutes) {
                 for (const route of expressRoutes) {
-                  const match = route.match(/router\.\w+\('([^']+)'/);
+                  const match = route.match(/router\.\w+\(['"`]([^'"`]+)['"`]/);
                   if (match) {
-                    routes.push(match[1]);
+                    routes.add(match[1]);
                   }
                 }
               }
@@ -71,7 +88,7 @@ export async function scanRoutes(): Promise<string[]> {
       }
     }
 
-    return [...new Set(routes)].sort();
+    return Array.from(routes).sort();
   } catch {
     return [];
   }

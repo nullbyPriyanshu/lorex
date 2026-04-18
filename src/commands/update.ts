@@ -10,12 +10,17 @@ import { scanSchema } from '../scanners/schema';
 import { scanRoutes } from '../scanners/routes';
 import { scanEnv } from '../scanners/env';
 import { scanGit } from '../scanners/git';
+import { scanScripts } from '../scanners/scripts';
+import { scanDeployment } from '../scanners/deployment';
+import { isSystemDirectory } from '../utils/project';
 import { generateMarkdown } from '../generators/markdown';
 
 export async function updateCommand() {
-  intro(chalk.cyan('🔄 Updating Lorex Documentation\n'));
+  let spinner: any = null;
 
   try {
+    intro(chalk.cyan('🔄 Updating Lorex Documentation\n'));
+
     const loremPath = path.join(process.cwd(), 'lorex.md');
 
     if (!fs.existsSync(loremPath)) {
@@ -30,8 +35,12 @@ export async function updateCommand() {
 
     console.log('');
 
+    if (isSystemDirectory()) {
+      logger.warn('Are you sure you are in the right project folder?');
+    }
+
     // Start scanning
-    const spinner = ora(chalk.cyan('Scanning your project...')).start();
+    spinner = ora(chalk.cyan('Scanning your project...')).start();
 
     // Run all scanners
     const packageInfo = scanPackage();
@@ -40,6 +49,8 @@ export async function updateCommand() {
     const envKeys = scanEnv();
     const routes = await scanRoutes();
     const gitLog = scanGit();
+    const scripts = scanScripts();
+    const deployment = scanDeployment();
 
     spinner.succeed(chalk.green('Project scanned successfully'));
 
@@ -52,6 +63,8 @@ export async function updateCommand() {
       envKeys,
       routes,
       gitLog,
+      scripts,
+      deployment,
     });
 
     // Write to file
@@ -62,6 +75,9 @@ export async function updateCommand() {
     console.log('');
     outro(chalk.cyan('✨ All done!'));
   } catch (error) {
+    if (spinner) {
+      spinner.fail(chalk.red('Error updating documentation'));
+    }
     logger.error(`Error updating: ${error}`);
     process.exit(1);
   }

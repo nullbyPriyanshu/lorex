@@ -6,6 +6,11 @@ export interface DatabaseSchema {
     name: string;
     fields: string[];
   }>;
+  relations: string[];
+}
+
+function capitalize(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 export function scanSchema(): DatabaseSchema | null {
@@ -18,25 +23,36 @@ export function scanSchema(): DatabaseSchema | null {
 
     const content = fs.readFileSync(schemaPath, 'utf-8');
     const models: DatabaseSchema['models'] = [];
+    const relations: string[] = [];
 
-    // Parse Prisma schema
     const modelRegex = /model\s+(\w+)\s*\{([^}]+)\}/g;
     let match;
 
     while ((match = modelRegex.exec(content)) !== null) {
       const modelName = match[1];
       const modelBody = match[2];
-
-      // Extract field names
       const fieldLines = modelBody.split('\n');
       const fields: string[] = [];
 
       for (const line of fieldLines) {
         const trimmed = line.trim();
         if (trimmed && !trimmed.startsWith('//') && !trimmed.startsWith('@@')) {
-          const fieldMatch = /^(\w+)\s+/.exec(trimmed);
+          const fieldMatch = /^(\w+)\s+([\w\[\]]+)/.exec(trimmed);
           if (fieldMatch) {
-            fields.push(fieldMatch[1]);
+            const fieldName = fieldMatch[1];
+            const fieldType = fieldMatch[2];
+            fields.push(fieldName);
+
+            const relationTargetMatch = fieldType.match(/^([A-Z][A-Za-z0-9_]*)\[\]$/);
+            if (relationTargetMatch) {
+              relations.push(
+                `${modelName} → has many ${capitalize(fieldName)}`
+              );
+            } else if (/^[A-Z][A-Za-z0-9_]*$/.test(fieldType) && fieldType !== modelName) {
+              if (trimmed.includes('@relation')) {
+                relations.push(`${modelName} → belongs to ${fieldType}`);
+              }
+            }
           }
         }
       }
@@ -44,7 +60,7 @@ export function scanSchema(): DatabaseSchema | null {
       models.push({ name: modelName, fields });
     }
 
-    return { models };
+    return { models, relations };
   } catch {
     return null;
   }

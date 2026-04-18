@@ -9,6 +9,8 @@ interface GeneratorInput {
   envKeys: string[];
   routes: string[];
   gitLog: string[];
+  scripts: Array<{ name: string; command: string }>;
+  deployment: string | null;
 }
 
 function getTopDependencies(
@@ -164,6 +166,14 @@ function formatStackSection(packageInfo: PackageInfo): string {
   return lines.join('\n');
 }
 
+function formatScriptsSection(scripts: Array<{ name: string; command: string }>): string {
+  if (scripts.length === 0) {
+    return 'No key npm scripts detected.';
+  }
+
+  return scripts.map((script) => `- ${script.name} → ${script.command}`).join('\n');
+}
+
 function addFolderDescriptions(structure: string): string {
   const descriptions: Record<string, string> = {
     'commands': 'CLI command implementations',
@@ -202,11 +212,30 @@ export function generateMarkdown(input: GeneratorInput): string {
   // Description
   lines.push(`${input.oneliner}\n`);
 
+  // Project Type
+  lines.push('## Project Type\n');
+  lines.push(`${input.packageInfo.projectType}`);
+  lines.push('');
+
   // Stack (with versions and auto-detection)
   const stackContent = formatStackSection(input.packageInfo);
   if (stackContent) {
     lines.push('## Stack\n');
     lines.push(stackContent);
+    lines.push('');
+  }
+
+  // NPM Scripts
+  if (input.scripts.length > 0) {
+    lines.push('## NPM Scripts\n');
+    lines.push(formatScriptsSection(input.scripts));
+    lines.push('');
+  }
+
+  // Deployment
+  if (input.deployment) {
+    lines.push('## Deployment\n');
+    lines.push(`- ${input.deployment}`);
     lines.push('');
   }
 
@@ -239,6 +268,14 @@ export function generateMarkdown(input: GeneratorInput): string {
       lines.push(model.fields.join('\n'));
       lines.push('```\n');
     }
+  }
+
+  if (input.schema && input.schema.relations && input.schema.relations.length > 0) {
+    lines.push('## Model Relations\n');
+    for (const relation of input.schema.relations) {
+      lines.push(`- ${relation}`);
+    }
+    lines.push('');
   }
 
   // Environment Keys (only if exists)

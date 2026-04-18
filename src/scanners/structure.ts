@@ -24,12 +24,17 @@ function scanFolder(
 ): TreeNode[] {
   if (depth > maxDepth) return [];
 
-  const items = fs.readdirSync(dirPath, { withFileTypes: true });
-  const nodes: TreeNode[] = [];
+  const items = fs.readdirSync(dirPath, { withFileTypes: true })
+    .filter((item) => !IGNORE_DIRS.includes(item.name))
+    .sort((a, b) => {
+      if (a.isDirectory() === b.isDirectory()) return a.name.localeCompare(b.name);
+      return a.isDirectory() ? -1 : 1;
+    });
 
-  for (const item of items) {
-    if (IGNORE_DIRS.includes(item.name)) continue;
+  const hiddenCount = items.length > 20 ? items.length - 10 : 0;
+  const visibleItems = hiddenCount > 0 ? items.slice(0, 10) : items;
 
+  const nodes: TreeNode[] = visibleItems.map((item) => {
     const fullPath = path.join(dirPath, item.name);
     const node: TreeNode = {
       name: item.name,
@@ -40,19 +45,22 @@ function scanFolder(
       node.children = scanFolder(fullPath, depth + 1, maxDepth);
     }
 
-    nodes.push(node);
+    return node;
+  });
+
+  if (hiddenCount > 0) {
+    nodes.push({
+      name: `... and ${hiddenCount} more files`,
+      isDir: false,
+    });
   }
 
-  return nodes.sort((a, b) => {
-    if (a.isDir === b.isDir) return a.name.localeCompare(b.name);
-    return a.isDir ? -1 : 1;
-  });
+  return nodes;
 }
 
 function nodesToString(
   nodes: TreeNode[],
-  prefix: string = '',
-  isLast: boolean = true
+  prefix: string = ''
 ): string[] {
   const lines: string[] = [];
 
@@ -66,9 +74,7 @@ function nodesToString(
 
     if (node.children && node.children.length > 0) {
       const extension = isLastNode ? '    ' : '│   ';
-      lines.push(
-        ...nodesToString(node.children, prefix + extension, isLastNode)
-      );
+      lines.push(...nodesToString(node.children, prefix + extension));
     }
   }
 
