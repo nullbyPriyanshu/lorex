@@ -1,6 +1,6 @@
 {
   "name": "lorex-cli",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Your project's living memory.",
   "main": "dist/index.js",
   "bin": {
