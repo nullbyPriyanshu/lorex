@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-interface PackageInfo {
+export interface PackageInfo {
   name: string;
   description: string;
   dependencies: Record<string, string>;
