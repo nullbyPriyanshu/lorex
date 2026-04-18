@@ -48,12 +48,27 @@ function getTopDependencies(
     'dotenv',
   ];
 
+  const noisePackages = [
+    'lorex-cli',
+    'nodemon',
+    'ts-node',
+    'typescript',
+    '@types/node',
+    '@types/react',
+    '@types/react-dom',
+    'eslint',
+    'prettier',
+    'jest',
+    'vitest',
+  ];
+
   const prioritized = important.filter((pkg) => deps[pkg]);
   const rest = Object.keys(deps).filter(
     (pkg) =>
       !important.includes(pkg) &&
       !pkg.startsWith('@types') &&
-      !pkg.startsWith('@clack')
+      !pkg.startsWith('@clack') &&
+      !noisePackages.includes(pkg)
   );
 
   const topDeps = prioritized.concat(rest).slice(0, limit);

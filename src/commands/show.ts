@@ -20,6 +20,7 @@ export function showCommand() {
     console.log('');
     console.log(chalk.dim('─'.repeat(60)));
     console.log('');
+    process.exit(0);
   } catch (error) {
     logger.error(`Failed to read file: ${error}`);
     process.exit(1);

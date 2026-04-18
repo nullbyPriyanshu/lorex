@@ -10,42 +10,74 @@ export interface PackageInfo {
   stack: string[];
 }
 
-export function scanPackage(): PackageInfo {
-  try {
-    const packagePath = path.join(process.cwd(), 'package.json');
-    const content = fs.readFileSync(packagePath, 'utf-8');
-    const pkg = JSON.parse(content);
+function detectStackFromFiles(): string[] {
+  const cwd = process.cwd();
+  const files = fs.readdirSync(cwd);
+  const stack: string[] = [];
 
-    const stack: string[] = [];
-    const allDeps = {
-      ...pkg.dependencies,
-      ...pkg.devDependencies,
-    };
-
-    // Detect stack
-    if (allDeps['next']) stack.push('Next.js');
-    if (allDeps['express']) stack.push('Express');
-    if (allDeps['@nestjs/core']) stack.push('NestJS');
-    if (allDeps['socket.io']) stack.push('Socket.IO');
-    if (allDeps['@prisma/client']) stack.push('Prisma');
-    if (allDeps['mongoose']) stack.push('MongoDB');
-
-    return {
-      name: pkg.name || 'Unknown',
-      description: pkg.description || '',
-      dependencies: pkg.dependencies || {},
-      devDependencies: pkg.devDependencies || {},
-      scripts: pkg.scripts || {},
-      stack: stack.length > 0 ? stack : ['Node.js'],
-    };
-  } catch {
-    return {
-      name: 'Unknown',
-      description: '',
-      dependencies: {},
-      devDependencies: {},
-      scripts: {},
-      stack: ['Node.js'],
-    };
+  if (files.some(f => f.endsWith('.html'))) stack.push('Vanilla HTML');
+  if (files.some(f => f.endsWith('.css'))) stack.push('CSS');
+  if (files.includes('tailwind.config.js') || files.includes('tailwind.config.ts')) {
+    // Replace CSS with Tailwind CSS
+    const cssIndex = stack.indexOf('CSS');
+    if (cssIndex !== -1) stack[cssIndex] = 'Tailwind CSS';
+    else stack.push('Tailwind CSS');
   }
+  if (files.includes('vite.config.js') || files.includes('vite.config.ts')) stack.push('Vite');
+
+  return stack;
+}
+
+export function scanPackage(): PackageInfo {
+  const packagePath = path.join(process.cwd(), 'package.json');
+  const hasPackageJson = fs.existsSync(packagePath);
+
+  let pkg: any = {};
+  let stack: string[] = [];
+
+  if (hasPackageJson) {
+    try {
+      const content = fs.readFileSync(packagePath, 'utf-8');
+      pkg = JSON.parse(content);
+    } catch {
+      // If can't parse, treat as no package.json
+    }
+  }
+
+  const allDeps = {
+    ...pkg.dependencies,
+    ...pkg.devDependencies,
+  };
+
+  // Detect stack from dependencies
+  if (allDeps['next']) stack.push('Next.js');
+  if (allDeps['express']) stack.push('Express');
+  if (allDeps['@nestjs/core']) stack.push('NestJS');
+  if (allDeps['socket.io']) stack.push('Socket.IO');
+  if (allDeps['@prisma/client']) stack.push('Prisma');
+  if (allDeps['mongoose']) stack.push('MongoDB');
+
+  // Detect from files
+  const fileStack = detectStackFromFiles();
+  stack = stack.concat(fileStack);
+
+  // If no stack detected and has package.json, default to Node.js
+  if (stack.length === 0 && hasPackageJson) {
+    stack.push('Node.js');
+  }
+
+  // Determine name
+  let name = pkg.name;
+  if (!name) {
+    name = path.basename(process.cwd());
+  }
+
+  return {
+    name,
+    description: pkg.description || '',
+    dependencies: pkg.dependencies || {},
+    devDependencies: pkg.devDependencies || {},
+    scripts: pkg.scripts || {},
+    stack,
+  };
 }

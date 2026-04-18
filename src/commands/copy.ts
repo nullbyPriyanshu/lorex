@@ -20,6 +20,7 @@ export async function copyCommand() {
       console.log('');
       logger.success('Documentation copied to clipboard!');
       console.log(`${chalk.gray('→')} Ready to paste into any AI chat\n`);
+      process.exit(0);
     } catch (clipboardError) {
       // Handle clipboard access error (common in headless environments)
       logger.warn('Clipboard unavailable in this environment');
