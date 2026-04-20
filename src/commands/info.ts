@@ -65,3 +65,17 @@ export async function infoCommand() {
       const lineCount = fileContent.split('\n').length;
       const lastScanned = formatRelativeTime(Date.now() - stats.mtimeMs);
 
+      console.log(`${lorexFile}:`);
+      console.log(`  Last scanned: ${lastScanned}`);
+      console.log(`  Size: ${sizeKb}kb`);
+      console.log(`  Lines: ${lineCount}`);
+      console.log('');
+    }
+  } catch (error) {
+    logger.error(`Error getting info: ${error}`);
+    process.exit(1);
+  }
+
+  process.exit(0);
+}
+

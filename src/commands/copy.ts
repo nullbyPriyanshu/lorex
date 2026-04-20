@@ -84,3 +84,26 @@ export async function copyCommand() {
         copied = true;
         break;
       } catch {
+        continue;
+      }
+    }
+
+    if (copied) {
+      logger.success('Copied to clipboard! Paste into any AI chat.');
+    } else {
+      const tmpPath = path.join(os.tmpdir(), 'lorex-output.md');
+      fs.writeFileSync(tmpPath, content);
+      logger.error('Could not access clipboard automatically.');
+      logger.info(`File saved to: ${tmpPath}`);
+      logger.info('Linux users: install clipboard tool with one of these:');
+      logger.info('  Wayland → sudo dnf install wl-clipboard');
+      logger.info('  X11     → sudo apt install xclip');
+      logger.info('  Ubuntu  → sudo apt install xclip');
+    }
+  } catch (error) {
+    logger.error(String(error));
+    process.exit(1);
+  }
+
+  process.exit(0);
+}

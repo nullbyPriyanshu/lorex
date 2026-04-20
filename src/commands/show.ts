@@ -147,3 +147,5 @@ export function showCommand(options: { short?: boolean }) {
   } catch (error) {
     logger.error(`Error showing documentation: ${error}`);
     process.exit(1);
+  }
+}
