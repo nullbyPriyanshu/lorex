@@ -21,11 +21,23 @@ export async function infoCommand() {
     }
 
     const root = process.cwd();
-    const lorexPath = path.join(root, 'lorex.md');
     const packagePath = path.join(root, 'package.json');
 
-    if (!fs.existsSync(lorexPath)) {
-      logger.error('No lorex.md found. Run "lorex init" first.');
+    // Find all lorex files
+    const lorexFiles: string[] = [];
+    try {
+      const files = fs.readdirSync(root);
+      for (const file of files) {
+        if (file.startsWith('lorex') && file.endsWith('.md')) {
+          lorexFiles.push(file);
+        }
+      }
+    } catch {
+      // Ignore
+    }
+
+    if (lorexFiles.length === 0) {
+      logger.error('No lorex.md files found. Run "lorex init" first.');
       process.exit(1);
     }
 
@@ -36,17 +48,36 @@ export async function infoCommand() {
     const projectName = packageJson.name || path.basename(root);
     const version = packageJson.version || 'unknown';
 
-    const fileContent = fs.readFileSync(lorexPath, 'utf-8');
-    const stats = fs.statSync(lorexPath);
-    const sizeKb = (stats.size / 1024).toFixed(1);
-    const lineCount = fileContent.split('\n').length;
-    const lastScanned = formatRelativeTime(Date.now() - stats.mtimeMs);
-
     console.log(`lorex v${version}`);
     console.log(`Project: ${projectName}`);
-    console.log(`Last scanned: ${lastScanned}`);
-    console.log(`lorex.md size: ${sizeKb}kb`);
-    console.log(`Lines: ${lineCount}`);
+    console.log('');
+
+    for (const lorexFile of lorexFiles) {
+      const lorexPath = path.join(root, lorexFile);
+
+      if (!fs.existsSync(lorexPath)) {
+        continue;
+      }
+
+      const fileContent = fs.readFileSync(lorexPath, 'utf-8');
+      const stats = fs.statSync(lorexPath);
+      const sizeKb = (stats.size / 1024).toFixed(1);
+      const lineCount = fileContent.split('\n').length;
+      const lastScanned = formatRelativeTime(Date.now() - stats.mtimeMs);
+
+      console.log(`${lorexFile}:`);
+      console.log(`  Last scanned: ${lastScanned}`);
+      console.log(`  Size: ${sizeKb}kb`);
+      console.log(`  Lines: ${lineCount}`);
+      console.log('');
+    }
+  } catch (error) {
+    logger.error(`Error getting info: ${error}`);
+    process.exit(1);
+  }
+
+  process.exit(0);
+}
 
     process.exit(0);
   } catch (error) {

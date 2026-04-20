@@ -94,30 +94,61 @@ export function showCommand(options: { short?: boolean }) {
       logger.warn('Are you sure you are in the right project folder?');
     }
 
-    const lorexPath = path.join(process.cwd(), 'lorex.md');
+    // Find all lorex files
+    const cwd = process.cwd();
+    const lorexFiles: string[] = [];
 
-    if (!fs.existsSync(lorexPath)) {
-      logger.error('lorex.md not found. Run "lorex init" first');
+    try {
+      const files = fs.readdirSync(cwd);
+      for (const file of files) {
+        if (file.startsWith('lorex') && file.endsWith('.md')) {
+          lorexFiles.push(file);
+        }
+      }
+    } catch {
+      // Ignore
+    }
+
+    if (lorexFiles.length === 0) {
+      logger.error('No lorex.md files found. Run "lorex init" first');
       process.exit(1);
     }
 
-    const content = fs.readFileSync(lorexPath, 'utf-8');
-    const termWidth = process.stdout.columns || 80;
+    for (const lorexFile of lorexFiles) {
+      const lorexPath = path.join(cwd, lorexFile);
 
-    console.log('');
+      if (!fs.existsSync(lorexPath)) {
+        continue;
+      }
 
-    if (options?.short) {
-      renderShortView(content);
-    } else if (termWidth < 80) {
-      renderSummaryView(content);
-    } else {
-      console.log(chalk.dim('─'.repeat(60)));
+      const content = fs.readFileSync(lorexPath, 'utf-8');
+      const termWidth = process.stdout.columns || 80;
+
       console.log('');
-      console.log(chalk.cyan(content));
-      console.log('');
-      console.log(chalk.dim('─'.repeat(60)));
-      console.log('');
+
+      if (lorexFiles.length > 1) {
+        console.log(chalk.bold(`📄 ${lorexFile}`));
+        console.log('');
+      }
+
+      if (options?.short) {
+        renderShortView(content);
+      } else if (termWidth < 80) {
+        renderSummaryView(content);
+      } else {
+        console.log(chalk.dim('─'.repeat(60)));
+        console.log('');
+        console.log(chalk.cyan(content));
+        console.log('');
+        console.log(chalk.dim('─'.repeat(60)));
+        console.log('');
+      }
     }
+  } catch (error) {
+    logger.error(`Error showing documentation: ${error}`);
+    process.exit(1);
+  }
+}
   } catch (error) {
     logger.error(String(error));
     process.exit(1);
