@@ -8,7 +8,9 @@ npm install -g lorex-cli
 
 ---
 
-AI tools are only as useful as the context you give them. Lorex generates a single `lorex.md` file that captures everything about your project - stack, structure, models, routes, env keys, recent commits , so you can paste it once and skip the 5-minute explanation every time you start a new conversation.
+AI tools are only as useful as the context you give them. Lorex generates `lorex.md` files that capture everything about your project - stack, structure, models, routes, env keys, recent commits, so you can paste it once and skip the 5-minute explanation every time you start a new conversation.
+
+For monorepo or multi-service projects, Lorex automatically detects sub-projects (folders with `package.json`) and creates separate files like `lorex.client.md` and `lorex.server.md`.
 
 It runs entirely offline. It reads no values, only keys. Nothing leaves your machine.
 
@@ -30,12 +32,13 @@ lorex --help    # list all commands
 
 ## What it captures
 
-- **Stack** - detects Next.js, Express, NestJS, Socket.IO, Prisma, Mongoose, and more from your dependencies
+- **Stack** - detects Next.js, Express, NestJS, Socket.IO, Prisma, Mongoose, TypeORM, Sequelize, and more from your dependencies
 - **Folder structure** - visual tree, ignoring noise (`node_modules`, `.git`, `.next`, `dist`, etc.)
-- **Database models** - all Prisma models and their fields
-- **Routes** - API and page routes across your project
+- **Database models** - Prisma, Mongoose, TypeORM, and Sequelize models with their fields
+- **Routes** - API routes from Express, Fastify, Koa, NestJS, and Next.js apps/pages
 - **Environment keys** - what's required, never what the values are
 - **Git activity** - last 10 commits
+- **Multi-project support** - automatically scans client/server folders and creates separate documentation files
 
 ---
 

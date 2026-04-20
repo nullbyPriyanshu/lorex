@@ -11,18 +11,44 @@ export async function copyCommand() {
       logger.warn('Are you sure you are in the right project folder?');
     }
 
-    const lorexPath = path.join(process.cwd(), 'lorex.md');
-    const relativeLorex = getRelativePath(lorexPath);
+    // Find all lorex files
+    const cwd = process.cwd();
+    const lorexFiles: string[] = [];
 
-    if (!fs.existsSync(lorexPath)) {
-      logger.error(`${relativeLorex} not found. Run "lorex init" first.`);
+    try {
+      const files = fs.readdirSync(cwd);
+      for (const file of files) {
+        if (file.startsWith('lorex') && file.endsWith('.md')) {
+          lorexFiles.push(file);
+        }
+      }
+    } catch {
+      // Ignore
+    }
+
+    if (lorexFiles.length === 0) {
+      logger.error('No lorex.md files found. Run "lorex init" first');
       process.exit(1);
     }
 
-    const content = fs.readFileSync(lorexPath, 'utf-8');
+    // Concatenate all lorex files
+    let content = '';
+    for (const lorexFile of lorexFiles) {
+      const lorexPath = path.join(cwd, lorexFile);
+
+      if (!fs.existsSync(lorexPath)) {
+        continue;
+      }
+
+      const fileContent = fs.readFileSync(lorexPath, 'utf-8');
+      if (content.length > 0) {
+        content += '\n\n---\n\n';
+      }
+      content += fileContent;
+    }
 
     if (!content || content.trim().length === 0) {
-      logger.error('lorex.md is empty. Run "lorex init" to regenerate.');
+      logger.error('lorex.md files are empty. Run "lorex init" to regenerate.');
       process.exit(1);
     }
 
@@ -71,7 +97,7 @@ export async function copyCommand() {
       logger.info(`File saved to: ${tmpPath}`);
       logger.info('Linux users: install clipboard tool with one of these:');
       logger.info('  Wayland → sudo dnf install wl-clipboard');
-      logger.info('  X11     → sudo dnf install xclip');
+      logger.info('  X11     → sudo apt install xclip');
       logger.info('  Ubuntu  → sudo apt install xclip');
     }
   } catch (error) {

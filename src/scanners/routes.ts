@@ -57,32 +57,75 @@ export async function scanRoutes(): Promise<string[]> {
           routes.add(normalized);
         }
       } else {
-        const srcPath = path.join(cwd, 'src');
-        if (fs.existsSync(srcPath)) {
-          const routeFiles = await glob('**/routes/**/*.{ts,js}', {
-            cwd: srcPath,
-            ignore: ['**/node_modules/**'],
-          });
+        // Scan for routes in all TypeScript/JavaScript files
+        const routeFiles = await glob('**/*.{ts,js}', {
+          cwd,
+          ignore: ['**/node_modules/**', '**/dist/**', '**/build/**'],
+        });
 
-          for (const file of routeFiles) {
-            const filePath = path.join(srcPath, file);
-            try {
-              const content = fs.readFileSync(filePath, 'utf-8');
-              const expressRoutes = content.match(
-                /router\.(get|post|put|delete|patch)\(['"`]([^'"`]+)['"`]/g
-              );
+        for (const file of routeFiles) {
+          const filePath = path.join(cwd, file);
+          try {
+            const content = fs.readFileSync(filePath, 'utf-8');
 
-              if (expressRoutes) {
-                for (const route of expressRoutes) {
-                  const match = route.match(/router\.\w+\(['"`]([^'"`]+)['"`]/);
-                  if (match) {
-                    routes.add(match[1]);
-                  }
+            // Express router patterns
+            const expressRoutes = content.match(
+              /(?:router|app)\.(get|post|put|delete|patch|use|all)\(['"`]([^'"`]+)['"`]/g
+            );
+
+            if (expressRoutes) {
+              for (const route of expressRoutes) {
+                const match = route.match(/(?:router|app)\.\w+\(['"`]([^'"`]+)['"`]/);
+                if (match) {
+                  routes.add(match[1]);
                 }
               }
-            } catch {
-              // Ignore read errors
             }
+
+            // Fastify routes
+            const fastifyRoutes = content.match(
+              /fastify\.(get|post|put|delete|patch|all)\(['"`]([^'"`]+)['"`]/g
+            );
+
+            if (fastifyRoutes) {
+              for (const route of fastifyRoutes) {
+                const match = route.match(/fastify\.\w+\(['"`]([^'"`]+)['"`]/);
+                if (match) {
+                  routes.add(match[1]);
+                }
+              }
+            }
+
+            // Koa routes
+            const koaRoutes = content.match(
+              /router\.(get|post|put|delete|patch)\(['"`]([^'"`]+)['"`]/g
+            );
+
+            if (koaRoutes) {
+              for (const route of koaRoutes) {
+                const match = route.match(/router\.\w+\(['"`]([^'"`]+)['"`]/);
+                if (match) {
+                  routes.add(match[1]);
+                }
+              }
+            }
+
+            // NestJS routes (decorators)
+            const nestRoutes = content.match(
+              /@(?:Get|Post|Put|Delete|Patch)\(['"`]([^'"`]+)['"`]\)/g
+            );
+
+            if (nestRoutes) {
+              for (const route of nestRoutes) {
+                const match = route.match(/@\w+\(['"`]([^'"`]+)['"`]\)/);
+                if (match) {
+                  routes.add(match[1]);
+                }
+              }
+            }
+
+          } catch {
+            // Ignore read errors
           }
         }
       }
