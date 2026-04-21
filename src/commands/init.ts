@@ -10,11 +10,20 @@ import { scanPackage } from '../scanners/package';
 import { scanSchema } from '../scanners/schema';
 import { scanRoutes } from '../scanners/routes';
 import { scanEnv } from '../scanners/env';
-import { scanGit } from '../scanners/git';
+import { scanGit, scanGitCommits } from '../scanners/git';
 import { scanScripts } from '../scanners/scripts';
 import { scanDeployment } from '../scanners/deployment';
 import { isSystemDirectory } from '../utils/project';
 import { generateMarkdown } from '../generators/markdown';
+import { scanNextJsRoutes } from '../scanners/nextjs-routes';
+import { scanNextJsStructure } from '../scanners/nextjs-structure';
+import { scanAuth } from '../scanners/auth';
+import { scanComponents } from '../scanners/components';
+import { groupDependencies } from '../utils/dependencies';
+import {
+  generateNextJsMarkdown,
+  writeLorexMarkdown,
+} from '../generators/nextjs-markdown';
 
 interface ScanResult {
   packageInfo: any;
@@ -25,6 +34,12 @@ interface ScanResult {
   gitLog: any;
   scripts: any;
   deployment: any;
+  isNextJsProject?: boolean;
+  nextJsRoutes?: any;
+  nextJsStructure?: string;
+  auth?: any;
+  components?: any;
+  commits?: any;
 }
 
 async function scanProject(projectRoot: string): Promise<ScanResult> {
@@ -39,7 +54,38 @@ async function scanProject(projectRoot: string): Promise<ScanResult> {
     const gitLog = scanGit();
     const scripts = scanScripts();
     const deployment = scanDeployment();
-    return { packageInfo, structure, schema, envKeys, routes, gitLog, scripts, deployment };
+
+    // Check if this is a Next.js project with App Router
+    const isNextJsProject =
+      packageInfo.stack?.includes('Next.js') &&
+      fs.existsSync(path.join(process.cwd(), 'app'));
+
+    let nextJsRoutes, nextJsStructure, auth, components, commits;
+
+    if (isNextJsProject) {
+      nextJsRoutes = await scanNextJsRoutes();
+      nextJsStructure = scanNextJsStructure();
+      auth = scanAuth(process.cwd());
+      components = await scanComponents(process.cwd());
+      commits = scanGitCommits(5);
+    }
+
+    return {
+      packageInfo,
+      structure,
+      schema,
+      envKeys,
+      routes,
+      gitLog,
+      scripts,
+      deployment,
+      isNextJsProject,
+      nextJsRoutes,
+      nextJsStructure,
+      auth,
+      components,
+      commits,
+    };
   } finally {
     process.chdir(originalCwd);
   }
@@ -116,32 +162,68 @@ export async function initCommand() {
 
     // Generate markdown files
     for (const { root, result } of results) {
-      const markdown = generateMarkdown({
-        oneliner,
-        packageInfo: result.packageInfo,
-        structure: result.structure,
-        schema: result.schema,
-        envKeys: result.envKeys,
-        routes: result.routes,
-        gitLog: result.gitLog,
-        scripts: result.scripts,
-        deployment: result.deployment,
-      });
+      let outputPath = path.join(process.cwd(), 'lorex.md');
 
-      // Determine filename
-      let filename = 'lorex.md';
+      // Determine filename for multi-project setups
       if (results.length > 1) {
         const folderName = path.basename(root);
-        filename = `lorex.${folderName}.md`;
+        outputPath = path.join(process.cwd(), `lorex.${folderName}.md`);
+      }
+
+      let markdown: string;
+
+      // Use Next.js optimized markdown for Next.js projects
+      if (result.isNextJsProject && result.nextJsRoutes) {
+        const grouped = groupDependencies(
+          result.packageInfo.dependencies,
+          result.packageInfo.devDependencies
+        );
+
+        markdown = generateNextJsMarkdown({
+          projectName: result.packageInfo.name || 'Project',
+          projectDescription: oneliner,
+          nextJsRoutes: result.nextJsRoutes,
+          structureTree: result.nextJsStructure || '',
+          groupedPackages: grouped,
+          authConfig: result.auth || { authType: 'None' },
+          commits: result.commits || [],
+          components: result.components || [],
+          schema: result.schema,
+          envKeys: result.envKeys,
+        });
+      } else {
+        // Use original markdown generator for non-Next.js projects
+        markdown = generateMarkdown({
+          oneliner,
+          packageInfo: result.packageInfo,
+          structure: result.structure,
+          schema: result.schema,
+          envKeys: result.envKeys,
+          routes: result.routes,
+          gitLog: result.gitLog,
+          scripts: result.scripts,
+          deployment: result.deployment,
+        });
       }
 
       // Write to file
-      const outputPath = path.join(process.cwd(), filename);
       fs.writeFileSync(outputPath, markdown);
     }
 
     const duration = (Date.now() - scanStart) / 1000;
-    const totalRoutes = results.reduce((sum, r) => sum + r.result.routes.length, 0);
+
+    // Calculate total routes (handle both standard and Next.js routes)
+    let totalRoutes = 0;
+    for (const r of results) {
+      if (r.result.isNextJsProject && r.result.nextJsRoutes) {
+        totalRoutes +=
+          (r.result.nextJsRoutes.pageRoutes?.length || 0) +
+          (r.result.nextJsRoutes.apiRoutes?.length || 0);
+      } else {
+        totalRoutes += r.result.routes.length;
+      }
+    }
+
     const totalModels = results.reduce((sum, r) => sum + (r.result.schema?.models.length ?? 0), 0);
     const totalCommits = results.reduce((sum, r) => sum + r.result.gitLog.length, 0);
     const stacks = results.map(r => r.result.packageInfo.stack.join(', ')).join('; ');
