@@ -1,36 +1,67 @@
 import fs from 'fs';
 import path from 'path';
 
-export function scanEnv(): string[] {
+export interface EnvKey {
+  key: string;
+  source: string; // Which .env file it came from
+}
+
+/**
+ * Scan environment variable files (.env, .env.local, .env.development, .env.production, .env.example)
+ * Returns deduplicated list of keys with their source file
+ */
+export function scanEnv(): EnvKey[] {
   try {
     const cwd = process.cwd();
+    const envFiles = [
+      '.env',
+      '.env.local',
+      '.env.development',
+      '.env.production',
+      '.env.example',
+    ];
 
-    // Try .env.example first
-    let envPath = path.join(cwd, '.env.example');
-    if (!fs.existsSync(envPath)) {
-      // Try .env.local
-      envPath = path.join(cwd, '.env.local');
-    }
+    const keyMap: Record<string, string> = {}; // Use first occurrence's source file
 
-    if (!fs.existsSync(envPath)) {
-      return [];
-    }
+    for (const envFile of envFiles) {
+      const envPath = path.join(cwd, envFile);
 
-    const content = fs.readFileSync(envPath, 'utf-8');
-    const keys: string[] = [];
+      if (!fs.existsSync(envPath)) {
+        continue;
+      }
 
-    const lines = content.split('\n');
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed && !trimmed.startsWith('#')) {
-        const keyMatch = /^([A-Z_][A-Z0-9_]*)\s*=/.exec(trimmed);
-        if (keyMatch) {
-          keys.push(keyMatch[1]);
+      try {
+        const content = fs.readFileSync(envPath, 'utf-8');
+        const lines = content.split('\n');
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+
+          // Skip empty lines and comments
+          if (!trimmed || trimmed.startsWith('#')) {
+            continue;
+          }
+
+          // Extract key (everything before the = sign)
+          const keyMatch = /^([A-Z_][A-Z0-9_]*)\s*=/.exec(trimmed);
+          if (keyMatch) {
+            const key = keyMatch[1];
+            // Store with source file, but only if key hasn't been seen yet
+            if (!keyMap[key]) {
+              keyMap[key] = envFile;
+            }
+          }
         }
+      } catch {
+        // Ignore read errors for individual files
       }
     }
 
-    return keys;
+    // Convert to array and return
+    return Object.entries(keyMap).map(([key, source]) => ({
+      key,
+      source,
+    }));
   } catch {
     return [];
   }
