@@ -3,7 +3,7 @@ import path from 'path';
 
 export interface AuthConfig {
   authType?: string; // NextAuth, Clerk, Custom, None
-  providers?: string[];
+  providers: string[];
   sessionStrategy?: string; // JWT or Database
   configFiles: string[];
 }

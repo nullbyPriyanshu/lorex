@@ -208,7 +208,7 @@ export function scanNextJsStructure(): string {
     const nodes = scanFolder(appPath);
     const lines = ['```', ''];
     lines.push(...nodesToString(nodes));
-    lines.push('', '```'];
+    lines.push('', '```');
 
     return lines.join('\n');
   } catch (error) {

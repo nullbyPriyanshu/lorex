@@ -2,6 +2,10 @@ import fs from 'fs';
 import { ApiRoute, NextJsRoutes } from '../scanners/nextjs-routes';
 import { AuthConfig } from '../scanners/auth';
 import { ComponentInfo } from '../scanners/components';
+import { EnvKey } from '../scanners/env';
+import { GroupedDependencies } from '../utils/dependencies';
+import { formatDaysAgo, Commit } from '../scanners/git';
+import { DatabaseSchema } from '../scanners/schema';
 /**
  * Generate the header for the lorex.md file
  */
@@ -138,7 +142,7 @@ function formatPackagesSection(grouped: GroupedDependencies): string {
     const packages = grouped[category];
     if (Object.keys(packages).length === 0) continue;
 
-    lines.push(`### ${categoryLabels[category]}`);
+    lines.push(`### ${categoryLabels[category as string]}`);
     for (const [name, version] of Object.entries(packages)) {
       lines.push(`- ${name} \`${version}\``);
     }
