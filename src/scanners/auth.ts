@@ -162,6 +162,38 @@ export function scanAuth(cwd: string): AuthConfig {
     if (clerkConfig) return clerkConfig;
 
     // Check for other auth libraries
+    if (allDeps['better-auth']) {
+      return {
+        authType: 'Better Auth',
+        providers: [],
+        configFiles: [],
+      };
+    }
+
+    if (allDeps['lucia']) {
+      return {
+        authType: 'Lucia',
+        providers: [],
+        configFiles: [],
+      };
+    }
+
+    if (allDeps['iron-session']) {
+      return {
+        authType: 'Iron Session',
+        providers: [],
+        configFiles: [],
+      };
+    }
+
+    if (allDeps['jose']) {
+      return {
+        authType: 'Jose (JWT)',
+        providers: [],
+        configFiles: [],
+      };
+    }
+
     if (allDeps['passport'] || allDeps['passport-jwt']) {
       return {
         authType: 'Passport.js',
@@ -173,6 +205,16 @@ export function scanAuth(cwd: string): AuthConfig {
     if (allDeps['jsonwebtoken']) {
       return {
         authType: 'Custom (JWT)',
+        providers: [],
+        configFiles: [],
+      };
+    }
+
+    // Check for custom auth implementation
+    const apiAuthPath = path.join(cwd, 'app', 'api', 'auth');
+    if (fs.existsSync(apiAuthPath)) {
+      return {
+        authType: 'Custom Auth implementation',
         providers: [],
         configFiles: [],
       };

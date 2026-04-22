@@ -11,6 +11,10 @@ const IGNORE_DIRS = [
   'coverage',
   '.vercel',
   '.turbo',
+  '__pycache__',
+  '.pytest_cache',
+  '.venv',
+  'venv',
 ];
 
 interface TreeNode {
@@ -101,7 +105,7 @@ function isRouteGroup(dirname: string): boolean {
 function scanFolder(
   dirPath: string,
   depth: number = 0,
-  maxDepth: number = 5
+  maxDepth: number = 4
 ): TreeNode[] {
   if (depth > maxDepth) return [];
 
@@ -179,7 +183,23 @@ function nodesToString(nodes: TreeNode[], prefix: string = ''): string[] {
 export function scanNextJsStructure(): string {
   try {
     const cwd = process.cwd();
-    const appPath = path.join(cwd, 'app');
+    let appPath = path.join(cwd, 'app');
+
+    // If /app doesn't exist, try common monorepo patterns
+    if (!fs.existsSync(appPath)) {
+      const alternativePaths = [
+        path.join(cwd, 'apps', 'web', 'app'),
+        path.join(cwd, 'packages', 'web', 'app'),
+        path.join(cwd, 'src', 'app'),
+      ];
+
+      for (const altPath of alternativePaths) {
+        if (fs.existsSync(altPath)) {
+          appPath = altPath;
+          break;
+        }
+      }
+    }
 
     if (!fs.existsSync(appPath)) {
       return '(No Next.js App Router found)';
@@ -192,6 +212,6 @@ export function scanNextJsStructure(): string {
 
     return lines.join('\n');
   } catch (error) {
-    return `(Unable to scan App Router structure: ${error})`;
+    return `(Unable to scan App Router structure)`;
   }
 }

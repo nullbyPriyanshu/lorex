@@ -17,33 +17,70 @@ export interface NextJsRoutes {
 
 /**
  * Parse the handler function to extract destructured fields from request.json()
+ * Handles multiple patterns:
+ * - const { name, email } = await request.json()
+ * - const body = await request.json(); body.name, body.email
+ * - const data = await req.json()
+ * - zod schema z.object({ name, email })
  */
 function extractRequestBodyFields(fileContent: string): string[] {
-  const fields: string[] = [];
+  const fields: Set<string> = new Set();
 
-  // Match: const { field1, field2 } = await request.json()
-  const destructureMatch = fileContent.match(
-    /const\s+\{\s*([^}]+)\s*\}\s*=\s*await\s+(?:req\.body|request\.json\(\))/
-  );
+  try {
+    // Pattern 1: const { name, email } = await request.json()
+    const destructurePattern = /const\s+\{\s*([^}]+)\s*\}\s*=\s*await\s+(?:req|request)\.json\(\)/g;
+    let match = destructurePattern.exec(fileContent);
+    while (match) {
+      const fieldString = match[1];
+      fieldString.split(',').forEach((f) => {
+        const field = f.trim();
+        if (field && !field.includes('=')) {
+          fields.add(field);
+        }
+      });
+      match = destructurePattern.exec(fileContent);
+    }
 
-  if (destructureMatch) {
-    const fieldString = destructureMatch[1];
-    const fieldNames = fieldString.split(',').map((f) => f.trim());
-    return fieldNames;
+    // Pattern 2: const body = await request.json(); then body.field access
+    const bodyVarPattern = /const\s+(\w+)\s*=\s*await\s+(?:req|request)\.json\(\)/;
+    const bodyVarMatch = bodyVarPattern.exec(fileContent);
+    if (bodyVarMatch) {
+      const varName = bodyVarMatch[1];
+      const fieldAccessPattern = new RegExp(`${varName}\\.([a-zA-Z_$][a-zA-Z0-9_$]*)`, 'g');
+      let fieldMatch = fieldAccessPattern.exec(fileContent);
+      while (fieldMatch) {
+        fields.add(fieldMatch[1]);
+        fieldMatch = fieldAccessPattern.exec(fileContent);
+      }
+    }
+
+    // Pattern 3: zod schema validation z.object({ name, email, ... })
+    const zodPattern = /z\.object\(\s*\{\s*([^}]+)\}/;
+    const zodMatch = zodPattern.exec(fileContent);
+    if (zodMatch) {
+      const fieldString = zodMatch[1];
+      fieldString.split(',').forEach((f) => {
+        const field = f.trim();
+        // Extract field name (before : or optional modifier)
+        const fieldName = field.match(/^([a-zA-Z_$][a-zA-Z0-9_$]*)/)?.[1];
+        if (fieldName) {
+          fields.add(fieldName);
+        }
+      });
+    }
+
+    // Pattern 4: const data = await req.json() (or similar variations)
+    const simplePattern = /const\s+(\w+)\s*=\s*await\s+(?:req\.json\(\)|request\.body)/;
+    const simpleMatch = simplePattern.exec(fileContent);
+    if (simpleMatch && fields.size === 0) {
+      // If we still have no fields and found a body variable, mark as "unknown"
+      // but we prefer to return empty array to put "body: unknown" in caller
+    }
+
+    return Array.from(fields);
+  } catch {
+    return [];
   }
-
-  // Also try parsing function parameters
-  const paramMatch = fileContent.match(
-    /(?:async\s+)?(?:function\s+\w+\s*)?\(\s*(?:req|request).*\{\s*const\s+\{\s*([^}]+)\s*\}\s*=\s*await(?:\s+req\.body|request\.json\(\))/
-  );
-
-  if (paramMatch) {
-    const fieldString = paramMatch[1];
-    const fieldNames = fieldString.split(',').map((f) => f.trim());
-    return fieldNames;
-  }
-
-  return fields;
 }
 
 /**
@@ -141,27 +178,33 @@ export async function scanNextJsRoutes(): Promise<NextJsRoutes> {
     });
 
     for (const file of apiFiles) {
-      const filePath = path.join(appPath, file);
-      const content = fs.readFileSync(filePath, 'utf-8');
+      try {
+        const filePath = path.join(appPath, file);
+        const content = fs.readFileSync(filePath, 'utf-8');
 
-      // Extract route path
-      const routePath = normalizeRoutePath(file, '/api');
+        // Extract route path
+        const routePath = normalizeRoutePath(file, '/api');
 
-      // Extract HTTP methods
-      const methods = extractHttpMethods(content);
+        // Extract HTTP methods
+        const methods = extractHttpMethods(content);
 
-      // Extract request body fields for POST/PUT/PATCH
-      const requestBodyFields =
-        methods.some((m) => ['POST', 'PUT', 'PATCH'].includes(m)) &&
-        content.includes('request.json()')
-          ? extractRequestBodyFields(content)
-          : undefined;
+        // Extract request body fields for POST/PUT/PATCH
+        let requestBodyFields: string[] | undefined;
+        if (methods.some((m) => ['POST', 'PUT', 'PATCH'].includes(m)) && 
+            content.includes('json()')) {
+          const fields = extractRequestBodyFields(content);
+          requestBodyFields = fields.length > 0 ? fields : undefined;
+        }
 
-      result.apiRoutes.push({
-        path: routePath,
-        methods: methods.length > 0 ? methods : ['GET'], // Default to GET if no explicit methods found
-        requestBodyFields: requestBodyFields,
-      });
+        result.apiRoutes.push({
+          path: routePath,
+          methods: methods.length > 0 ? methods : ['GET'], // Default to GET if no explicit methods found
+          requestBodyFields: requestBodyFields,
+        });
+      } catch (fileError) {
+        // Skip files that can't be read
+        continue;
+      }
     }
 
     // Scan for middleware.ts
@@ -170,19 +213,23 @@ export async function scanNextJsRoutes(): Promise<NextJsRoutes> {
 
     if (fs.existsSync(middlewarePath)) {
       result.middlewarePath = 'middleware.ts';
-      const content = fs.readFileSync(middlewarePath, 'utf-8');
-      // Try to extract matcher config
-      const matcherMatch = content.match(
-        /matcher\s*:\s*\[([^\]]+)\]|export\s+const\s+config\s*=\s*\{[^}]*matcher[^}]*\}/
-      );
-      if (matcherMatch) {
-        const matcherString = matcherMatch[1] || matcherMatch[0];
-        const paths = matcherString.match(/['"](.*?)['"]/g);
-        if (paths) {
-          result.middlewareMatchers = paths.map((p) =>
-            p.replace(/['"]/g, '')
-          );
+      try {
+        const content = fs.readFileSync(middlewarePath, 'utf-8');
+        // Try to extract matcher config
+        const matcherMatch = content.match(
+          /matcher\s*:\s*\[([^\]]+)\]|export\s+const\s+config\s*=\s*\{[^}]*matcher[^}]*\}/
+        );
+        if (matcherMatch) {
+          const matcherString = matcherMatch[1] || matcherMatch[0];
+          const paths = matcherString.match(/['"](.*?)['"]/g);
+          if (paths) {
+            result.middlewareMatchers = paths.map((p) =>
+              p.replace(/['"]/g, '')
+            );
+          }
         }
+      } catch {
+        // Ignore middleware parsing errors
       }
     } else if (fs.existsSync(middlewarePathAlt)) {
       result.middlewarePath = 'middleware.js';

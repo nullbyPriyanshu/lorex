@@ -95,38 +95,105 @@ function scanMongooseModels(cwd: string): DatabaseSchema {
   const relations: string[] = [];
 
   try {
-    const files = fs.readdirSync(cwd, { recursive: true })
-      .filter((file) => typeof file === 'string' && (file.endsWith('.ts') || file.endsWith('.js')))
-      .map((file) => path.join(cwd, file as string))
-      .filter((filePath) => fs.statSync(filePath).isFile());
+    // Look in /models and /src/models directories first
+    const modelDirs = [
+      path.join(cwd, 'models'),
+      path.join(cwd, 'src', 'models'),
+      path.join(cwd, 'app', 'models'),
+    ];
 
-    for (const filePath of files) {
+    const filesToScan: string[] = [];
+
+    // Check specific model directories
+    for (const dir of modelDirs) {
+      if (fs.existsSync(dir)) {
+        try {
+          const entries = fs.readdirSync(dir, { recursive: true })
+            .filter((file) => typeof file === 'string' && (file.endsWith('.ts') || file.endsWith('.js')))
+            .map((file) => path.join(dir, file as string));
+          filesToScan.push(...entries);
+        } catch {
+          // Ignore directory read errors
+        }
+      }
+    }
+
+    // Also scan all TypeScript/JavaScript files for inline Mongoose schemas
+    try {
+      const allFiles = fs.readdirSync(cwd, { recursive: true })
+        .filter((file) => typeof file === 'string' && (file.endsWith('.ts') || file.endsWith('.js')))
+        .filter((file) => {
+          // Skip node_modules and common exclude dirs
+          const fileStr = file as string;
+          return !fileStr.includes('node_modules') && 
+                 !fileStr.includes('.next') &&
+                 !fileStr.includes('dist') &&
+                 !fileStr.includes('build');
+        })
+        .map((file) => path.join(cwd, file as string))
+        .filter((filePath) => {
+          try {
+            return fs.statSync(filePath).isFile();
+          } catch {
+            return false;
+          }
+        });
+
+      // Add files that aren't already in filesToScan
+      for (const file of allFiles) {
+        if (!filesToScan.includes(file)) {
+          filesToScan.push(file);
+        }
+      }
+    } catch {
+      // Ignore error
+    }
+
+    for (const filePath of filesToScan) {
       try {
         const content = fs.readFileSync(filePath, 'utf-8');
 
         // Look for mongoose.Schema definitions
-        const schemaRegex = /new\s+Schema\s*\(\s*\{([^}]+)\}/g;
+        // Pattern: new Schema({ ... })
+        const schemaRegex = /new\s+(?:mongoose\.)?Schema\s*\(\s*\{([^}]+(?:\{[^}]*\}[^}]*)*)\}/g;
         let schemaMatch;
+        
         while ((schemaMatch = schemaRegex.exec(content)) !== null) {
           const schemaBody = schemaMatch[1];
           const fields: string[] = [];
 
-          // Extract field names
-          const fieldRegex = /(\w+):\s*\{/g;
+          // Extract field names - look for both key: type and nested field definitions
+          const fieldRegex = /(\w+)\s*:\s*(?:\{|[A-Za-z])/g;
+          const simpleFieldRegex = /^\s*(\w+)\s*:/gm;
+
           let fieldMatch;
-          while ((fieldMatch = fieldRegex.exec(schemaBody)) !== null) {
-            fields.push(fieldMatch[1]);
+          while ((fieldMatch = simpleFieldRegex.exec(schemaBody)) !== null) {
+            const fieldName = fieldMatch[1];
+            if (!fields.includes(fieldName)) {
+              fields.push(fieldName);
+            }
           }
 
-          // Try to find model name
-          const modelRegex = /mongoose\.model\s*\(\s*['"`]([^'"`]+)['"`]/g;
-          const modelMatch = modelRegex.exec(content);
-          if (modelMatch) {
-            models.push({ name: modelMatch[1], fields });
+          if (fields.length > 0) {
+            // Try to find model name from mongoose.model() call
+            const modelRegex = /mongoose\.model\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*\w+Schema/;
+            const modelMatch = modelRegex.exec(content);
+
+            if (modelMatch) {
+              models.push({ name: modelMatch[1], fields });
+            } else {
+              // If no explicit model call, look for schema variable name
+              const schemaVarRegex = /const\s+(\w+Schema)\s*=\s*new\s+(?:mongoose\.)?Schema/;
+              const schemaVarMatch = schemaVarRegex.exec(content);
+              if (schemaVarMatch) {
+                const schemaName = schemaVarMatch[1].replace('Schema', '');
+                models.push({ name: schemaName || 'Model', fields });
+              }
+            }
           }
         }
       } catch {
-        // Ignore read errors
+        // Ignore read errors for individual files
       }
     }
   } catch {

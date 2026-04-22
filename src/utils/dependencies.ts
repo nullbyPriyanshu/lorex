@@ -6,7 +6,12 @@ export interface GroupedDependencies {
   ui: Record<string, string>;
   database: Record<string, string>;
   auth: Record<string, string>;
+  validation: Record<string, string>;
   stateManagement: Record<string, string>;
+  fileStorage: Record<string, string>;
+  email: Record<string, string>;
+  realtime: Record<string, string>;
+  payments: Record<string, string>;
   testing: Record<string, string>;
   tooling: Record<string, string>;
   other: Record<string, string>;
@@ -15,6 +20,7 @@ export interface GroupedDependencies {
 const CATEGORY_MAP: Record<string, Record<string, string>> = {
   ui: {
     react: 'React',
+    'react-dom': 'React DOM',
     vue: 'Vue',
     svelte: 'Svelte',
     '@angular/core': 'Angular',
@@ -29,6 +35,7 @@ const CATEGORY_MAP: Record<string, Record<string, string>> = {
     '@react-spring/web': 'React Spring',
     'react-beautiful-dnd': 'React Beautiful DnD',
     '@dnd-kit/core': 'dnd kit',
+    'react-hook-form': 'React Hook Form',
   },
   database: {
     '@prisma/client': 'Prisma',
@@ -57,12 +64,24 @@ const CATEGORY_MAP: Record<string, Record<string, string>> = {
     'passport': 'Passport.js',
     'passport-jwt': 'Passport JWT',
     'jsonwebtoken': 'JWT',
-    'jsonwebtoken': 'JWT',
     'bcryptjs': 'bcryptjs',
     'bcrypt': 'bcrypt',
     '@auth/core': 'Auth.js',
     'supertokens-node': 'SuperTokens',
     'kratos': 'Ory Kratos',
+    'better-auth': 'Better Auth',
+    'lucia': 'Lucia',
+    'iron-session': 'Iron Session',
+    'jose': 'Jose (JWT)',
+  },
+  validation: {
+    'zod': 'Zod',
+    'yup': 'Yup',
+    'joi': 'Joi',
+    'superstruct': 'Superstruct',
+    'io-ts': 'io-ts',
+    'class-validator': 'class-validator',
+    'ajv': 'AJV',
   },
   stateManagement: {
     'redux': 'Redux',
@@ -78,6 +97,31 @@ const CATEGORY_MAP: Record<string, Record<string, string>> = {
     '@apollo/client': 'Apollo Client',
     'graphql-request': 'GraphQL Request',
     'swr': 'SWR',
+  },
+  fileStorage: {
+    'uploadthing': 'UploadThing',
+    'cloudinary': 'Cloudinary',
+    '@aws-sdk/client-s3': 'AWS S3',
+    'multer': 'Multer',
+    'sharp': 'Sharp (Image Processing)',
+  },
+  email: {
+    'resend': 'Resend',
+    'nodemailer': 'Nodemailer',
+    'sendgrid': 'SendGrid',
+    '@react-email/render': 'React Email',
+  },
+  realtime: {
+    'socket.io': 'Socket.io',
+    'ws': 'WebSocket',
+    'pusher': 'Pusher',
+    'supabase-js': 'Supabase Realtime',
+  },
+  payments: {
+    'stripe': 'Stripe',
+    'razorpay': 'Razorpay',
+    '@paypal/checkout-server-sdk': 'PayPal',
+    'square': 'Square',
   },
   testing: {
     'jest': 'Jest',
@@ -129,7 +173,12 @@ export function groupDependencies(
     ui: {},
     database: {},
     auth: {},
+    validation: {},
     stateManagement: {},
+    fileStorage: {},
+    email: {},
+    realtime: {},
+    payments: {},
     testing: {},
     tooling: {},
     other: {},

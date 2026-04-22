@@ -10,31 +10,42 @@ export interface ComponentInfo {
 
 /**
  * Check if a file is a client component
- * A file is a client component if it has "use client" at the top
+ * A file is a client component if it has "use client" directive at the top
+ * Supports both single and double quotes
+ * Scans first 5 lines only for performance
  */
 function isClientComponent(fileContent: string): boolean {
-  // Check for "use client" directive at the start of the file
-  // It should be one of the first lines (allowing for comments)
-  const lines = fileContent.split('\n');
+  try {
+    const lines = fileContent.split('\n');
 
-  for (let i = 0; i < Math.min(5, lines.length); i++) {
-    const line = lines[i].trim();
+    for (let i = 0; i < Math.min(5, lines.length); i++) {
+      const line = lines[i].trim();
 
-    // Skip empty lines and comments
-    if (!line || line.startsWith('//') || line.startsWith('/*')) {
-      continue;
+      // Skip empty lines and comments
+      if (!line || line.startsWith('//') || line.startsWith('/*')) {
+        continue;
+      }
+
+      // Check for "use client" directive with single or double quotes
+      if (
+        line === '"use client"' ||
+        line === "'use client'" ||
+        line === '`use client`' ||
+        line.startsWith('"use client"') ||
+        line.startsWith("'use client'") ||
+        line.startsWith('`use client`')
+      ) {
+        return true;
+      }
+
+      // Stop checking after first non-comment/non-empty line
+      break;
     }
 
-    // Check for "use client" directive
-    if (line === '"use client"' || line === "'use client'" || line === '`use client`') {
-      return true;
-    }
-
-    // Stop checking after first non-comment/non-empty line
-    break;
+    return false;
+  } catch {
+    return false;
   }
-
-  return false;
 }
 
 /**
@@ -65,16 +76,24 @@ export async function scanComponents(cwd: string): Promise<ComponentInfo[]> {
     });
 
     for (const file of files) {
-      const filePath = path.join(appPath, file);
-
       try {
-        const content = fs.readFileSync(filePath, 'utf-8');
-        const isClient = isClientComponent(content);
+        const filePath = path.join(appPath, file);
+
+        // Files in /app/api/ are always server components (route handlers)
+        const isApiRoute = file.startsWith('api' + path.sep) || file.startsWith('api/');
+        
+        let componentType: 'SC' | 'CC' = 'SC'; // Default to Server Component
+
+        if (!isApiRoute) {
+          const content = fs.readFileSync(filePath, 'utf-8');
+          componentType = isClientComponent(content) ? 'CC' : 'SC';
+        }
+
         const folder = getRelativeFolder(filePath, appPath);
 
         components.push({
           file: path.basename(filePath),
-          type: isClient ? 'CC' : 'SC',
+          type: componentType,
           folder: folder,
         });
       } catch {
@@ -93,7 +112,6 @@ export async function scanComponents(cwd: string): Promise<ComponentInfo[]> {
 
     return components;
   } catch (error) {
-    console.error('Error scanning components:', error);
     return components;
   }
 }
