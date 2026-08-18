@@ -53,7 +53,7 @@ export async function diffCommand() {
 
     const packageInfo = scanPackage();
     const routes = await scanRoutes();
-    const schema = scanSchema();
+    const schema = await scanSchema();
     const gitLog = scanGit();
 
     const currentRoutes = routes.length;

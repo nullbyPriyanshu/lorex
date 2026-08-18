@@ -1,5 +1,12 @@
 import fs from 'fs';
 import path from 'path';
+import { glob } from 'glob';
+import { collectSourceFiles } from '../utils/monorepo';
+import { resolveSourceDir, isInsideNodeModules } from '../utils/paths';
+import { dedupeModels } from '../utils/dedupe';
+import { isNestProject, scanNestEntities } from './nestjs';
+import { parseSourceFile, readFileContent } from '../utils/typescript';
+import { isScannableSourceFile } from '../utils/ignore';
 
 export interface DatabaseSchema {
   models: Array<{
@@ -11,40 +18,6 @@ export interface DatabaseSchema {
 
 function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-export function scanSchema(): DatabaseSchema | null {
-  try {
-    const cwd = process.cwd();
-
-    // Check for Prisma schema
-    const prismaSchemaPath = path.join(cwd, 'prisma', 'schema.prisma');
-    if (fs.existsSync(prismaSchemaPath)) {
-      return scanPrismaSchema(prismaSchemaPath);
-    }
-
-    // Check for Mongoose models
-    const mongooseModels = scanMongooseModels(cwd);
-    if (mongooseModels.models.length > 0) {
-      return mongooseModels;
-    }
-
-    // Check for TypeORM entities
-    const typeormEntities = scanTypeORMEntities(cwd);
-    if (typeormEntities.models.length > 0) {
-      return typeormEntities;
-    }
-
-    // Check for Sequelize models
-    const sequelizeModels = scanSequelizeModels(cwd);
-    if (sequelizeModels.models.length > 0) {
-      return sequelizeModels;
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
 }
 
 function scanPrismaSchema(schemaPath: string): DatabaseSchema {
@@ -64,17 +37,14 @@ function scanPrismaSchema(schemaPath: string): DatabaseSchema {
     for (const line of fieldLines) {
       const trimmed = line.trim();
       if (trimmed && !trimmed.startsWith('//') && !trimmed.startsWith('@@')) {
-        const fieldMatch = /^(\w+)\s+([\w\[\]]+)/.exec(trimmed);
+        const fieldMatch = /^(\w+)\s+([\w\[\]?]+)/.exec(trimmed);
         if (fieldMatch) {
-          const fieldName = fieldMatch[1];
-          const fieldType = fieldMatch[2];
-          fields.push(fieldName);
+          fields.push(`${fieldMatch[1]}: ${fieldMatch[2]}`);
 
-          const relationTargetMatch = fieldType.match(/^([A-Z][A-Za-z0-9_]*)\[\]$/);
+          const fieldType = fieldMatch[2];
+          const relationTargetMatch = fieldType.match(/^([A-Z][A-Za-z0-9_]*)\[\]/);
           if (relationTargetMatch) {
-            relations.push(
-              `${modelName} → has many ${capitalize(fieldName)}`
-            );
+            relations.push(`${modelName} → has many ${capitalize(fieldMatch[1])}`);
           } else if (/^[A-Z][A-Za-z0-9_]*$/.test(fieldType) && fieldType !== modelName) {
             if (trimmed.includes('@relation')) {
               relations.push(`${modelName} → belongs to ${fieldType}`);
@@ -90,200 +60,145 @@ function scanPrismaSchema(schemaPath: string): DatabaseSchema {
   return { models, relations };
 }
 
-function scanMongooseModels(cwd: string): DatabaseSchema {
-  const models: DatabaseSchema['models'] = [];
+async function scanMongooseModels(projectRoot: string): Promise<DatabaseSchema> {
+  const models: Array<{ name: string; fields: string[]; sourceKey?: string }> = [];
   const relations: string[] = [];
+  const sourceDir = resolveSourceDir(projectRoot);
 
-  try {
-    // Look in /models and /src/models directories first
-    const modelDirs = [
-      path.join(cwd, 'models'),
-      path.join(cwd, 'src', 'models'),
-      path.join(cwd, 'app', 'models'),
-    ];
+  const modelDirs = [
+    path.join(sourceDir, 'models'),
+    path.join(projectRoot, 'models'),
+  ].filter((dir) => fs.existsSync(dir));
 
-    const filesToScan: string[] = [];
-
-    // Check specific model directories
-    for (const dir of modelDirs) {
-      if (fs.existsSync(dir)) {
-        try {
-          const entries = fs.readdirSync(dir, { recursive: true })
-            .filter((file) => typeof file === 'string' && (file.endsWith('.ts') || file.endsWith('.js')))
-            .map((file) => path.join(dir, file as string));
-          filesToScan.push(...entries);
-        } catch {
-          // Ignore directory read errors
-        }
+  const filesToScan = new Set<string>();
+  for (const dir of modelDirs) {
+    const files = await glob('**/*.{ts,js}', {
+      cwd: dir,
+      absolute: true,
+      ignore: ['**/node_modules/**'],
+    });
+    for (const file of files) {
+      if (isScannableSourceFile(file) && !isInsideNodeModules(file)) {
+        filesToScan.add(file);
       }
     }
+  }
 
-    // Also scan all TypeScript/JavaScript files for inline Mongoose schemas
+  for (const filePath of filesToScan) {
     try {
-      const allFiles = fs.readdirSync(cwd, { recursive: true })
-        .filter((file) => typeof file === 'string' && (file.endsWith('.ts') || file.endsWith('.js')))
-        .filter((file) => {
-          // Skip node_modules and common exclude dirs
-          const fileStr = file as string;
-          return !fileStr.includes('node_modules') && 
-                 !fileStr.includes('.next') &&
-                 !fileStr.includes('dist') &&
-                 !fileStr.includes('build');
-        })
-        .map((file) => path.join(cwd, file as string))
-        .filter((filePath) => {
-          try {
-            return fs.statSync(filePath).isFile();
-          } catch {
-            return false;
-          }
-        });
+      const content = readFileContent(filePath);
+      const schemaRegex = /new\s+(?:mongoose\.)?Schema\s*\(\s*\{([\s\S]*?)\}\s*[,)]/g;
+      let schemaMatch;
 
-      // Add files that aren't already in filesToScan
-      for (const file of allFiles) {
-        if (!filesToScan.includes(file)) {
-          filesToScan.push(file);
+      while ((schemaMatch = schemaRegex.exec(content)) !== null) {
+        const schemaBody = schemaMatch[1];
+        const fields: string[] = [];
+        const simpleFieldRegex = /^\s*(\w+)\s*:/gm;
+        let fieldMatch;
+
+        while ((fieldMatch = simpleFieldRegex.exec(schemaBody)) !== null) {
+          const fieldName = fieldMatch[1];
+          if (!fields.includes(fieldName)) {
+            fields.push(`${fieldName}: unknown`);
+          }
         }
+
+        if (fields.length === 0) continue;
+
+        const modelRegex = /mongoose\.model\s*\(\s*['"`]([^'"`]+)['"`]/;
+        const modelMatch = modelRegex.exec(content);
+        const schemaVarRegex = /const\s+(\w+Schema)\s*=\s*new\s+(?:mongoose\.)?Schema/;
+        const schemaVarMatch = schemaVarRegex.exec(content);
+        const modelName = modelMatch?.[1] || schemaVarMatch?.[1]?.replace(/Schema$/, '') || 'Model';
+
+        models.push({
+          name: modelName,
+          fields,
+          sourceKey: `${path.resolve(filePath)}::${modelName}`,
+        });
       }
     } catch {
-      // Ignore error
+      // ignore file read errors
     }
-
-    for (const filePath of filesToScan) {
-      try {
-        const content = fs.readFileSync(filePath, 'utf-8');
-
-        // Look for mongoose.Schema definitions
-        // Pattern: new Schema({ ... })
-        const schemaRegex = /new\s+(?:mongoose\.)?Schema\s*\(\s*\{([^}]+(?:\{[^}]*\}[^}]*)*)\}/g;
-        let schemaMatch;
-        
-        while ((schemaMatch = schemaRegex.exec(content)) !== null) {
-          const schemaBody = schemaMatch[1];
-          const fields: string[] = [];
-
-          // Extract field names - look for both key: type and nested field definitions
-          const fieldRegex = /(\w+)\s*:\s*(?:\{|[A-Za-z])/g;
-          const simpleFieldRegex = /^\s*(\w+)\s*:/gm;
-
-          let fieldMatch;
-          while ((fieldMatch = simpleFieldRegex.exec(schemaBody)) !== null) {
-            const fieldName = fieldMatch[1];
-            if (!fields.includes(fieldName)) {
-              fields.push(fieldName);
-            }
-          }
-
-          if (fields.length > 0) {
-            // Try to find model name from mongoose.model() call
-            const modelRegex = /mongoose\.model\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*\w+Schema/;
-            const modelMatch = modelRegex.exec(content);
-
-            if (modelMatch) {
-              models.push({ name: modelMatch[1], fields });
-            } else {
-              // If no explicit model call, look for schema variable name
-              const schemaVarRegex = /const\s+(\w+Schema)\s*=\s*new\s+(?:mongoose\.)?Schema/;
-              const schemaVarMatch = schemaVarRegex.exec(content);
-              if (schemaVarMatch) {
-                const schemaName = schemaVarMatch[1].replace('Schema', '');
-                models.push({ name: schemaName || 'Model', fields });
-              }
-            }
-          }
-        }
-      } catch {
-        // Ignore read errors for individual files
-      }
-    }
-  } catch {
-    // Ignore directory read errors
   }
 
-  return { models, relations };
+  return { models: dedupeModels(models), relations };
 }
 
-function scanTypeORMEntities(cwd: string): DatabaseSchema {
-  const models: DatabaseSchema['models'] = [];
+async function scanSequelizeModels(projectRoot: string): Promise<DatabaseSchema> {
+  const models: Array<{ name: string; fields: string[]; sourceKey?: string }> = [];
   const relations: string[] = [];
+  const sourceFiles = await collectSourceFiles(projectRoot, resolveSourceDir(projectRoot));
 
-  try {
-    const files = fs.readdirSync(cwd, { recursive: true })
-      .filter((file) => typeof file === 'string' && (file.endsWith('.ts') || file.endsWith('.js')))
-      .map((file) => path.join(cwd, file as string))
-      .filter((filePath) => fs.statSync(filePath).isFile());
+  for (const filePath of sourceFiles) {
+    try {
+      const content = readFileContent(filePath);
+      const defineRegex = /sequelize\.define\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*\{([\s\S]*?)\}/g;
+      let defineMatch;
 
-    for (const filePath of files) {
-      try {
-        const content = fs.readFileSync(filePath, 'utf-8');
+      while ((defineMatch = defineRegex.exec(content)) !== null) {
+        const modelName = defineMatch[1];
+        const modelBody = defineMatch[2];
+        const fields: string[] = [];
+        const fieldRegex = /(\w+):\s*\{/g;
+        let fieldMatch;
 
-        // Look for @Entity decorated classes
-        if (content.includes('@Entity')) {
-          const classRegex = /class\s+(\w+)/g;
-          const classMatch = classRegex.exec(content);
-          if (classMatch) {
-            const className = classMatch[1];
-            const fields: string[] = [];
-
-            // Extract @Column decorated properties
-            const columnRegex = /@Column\s*\([^)]*\)\s*\w+\s*:\s*(\w+)/g;
-            let columnMatch;
-            while ((columnMatch = columnRegex.exec(content)) !== null) {
-              fields.push(columnMatch[1]);
-            }
-
-            models.push({ name: className, fields });
-          }
+        while ((fieldMatch = fieldRegex.exec(modelBody)) !== null) {
+          fields.push(`${fieldMatch[1]}: unknown`);
         }
-      } catch {
-        // Ignore read errors
+
+        models.push({
+          name: modelName,
+          fields,
+          sourceKey: `${path.resolve(filePath)}::${modelName}`,
+        });
       }
+    } catch {
+      // ignore
     }
-  } catch {
-    // Ignore directory read errors
   }
 
-  return { models, relations };
+  return { models: dedupeModels(models), relations };
 }
 
-function scanSequelizeModels(cwd: string): DatabaseSchema {
-  const models: DatabaseSchema['models'] = [];
-  const relations: string[] = [];
-
+export async function scanSchema(): Promise<DatabaseSchema | null> {
   try {
-    const files = fs.readdirSync(cwd, { recursive: true })
-      .filter((file) => typeof file === 'string' && (file.endsWith('.ts') || file.endsWith('.js')))
-      .map((file) => path.join(cwd, file as string))
-      .filter((filePath) => fs.statSync(filePath).isFile());
+    const cwd = process.cwd();
+    const packagePath = path.join(cwd, 'package.json');
+    let deps: Record<string, string> = {};
 
-    for (const filePath of files) {
-      try {
-        const content = fs.readFileSync(filePath, 'utf-8');
+    if (fs.existsSync(packagePath)) {
+      const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf-8'));
+      deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+    }
 
-        // Look for sequelize.define calls
-        const defineRegex = /sequelize\.define\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*\{([^}]+)\}/g;
-        let defineMatch;
-        while ((defineMatch = defineRegex.exec(content)) !== null) {
-          const modelName = defineMatch[1];
-          const modelBody = defineMatch[2];
-          const fields: string[] = [];
+    const prismaSchemaPath = path.join(cwd, 'prisma', 'schema.prisma');
+    if (fs.existsSync(prismaSchemaPath)) {
+      return scanPrismaSchema(prismaSchemaPath);
+    }
 
-          // Extract field definitions
-          const fieldRegex = /(\w+):\s*\{/g;
-          let fieldMatch;
-          while ((fieldMatch = fieldRegex.exec(modelBody)) !== null) {
-            fields.push(fieldMatch[1]);
-          }
-
-          models.push({ name: modelName, fields });
-        }
-      } catch {
-        // Ignore read errors
+    if (isNestProject(deps) || deps.typeorm) {
+      const entities = await scanNestEntities(cwd);
+      if (entities.length > 0) {
+        return {
+          models: dedupeModels(entities),
+          relations: [],
+        };
       }
     }
-  } catch {
-    // Ignore directory read errors
-  }
 
-  return { models, relations };
+    const mongooseModels = await scanMongooseModels(cwd);
+    if (mongooseModels.models.length > 0) {
+      return mongooseModels;
+    }
+
+    const sequelizeModels = await scanSequelizeModels(cwd);
+    if (sequelizeModels.models.length > 0) {
+      return sequelizeModels;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
 }

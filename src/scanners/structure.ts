@@ -1,15 +1,9 @@
 import fs from 'fs';
 import path from 'path';
 
-const IGNORE_DIRS = [
-  'node_modules',
-  '.git',
-  '.next',
-  'dist',
-  'build',
-  '.cache',
-  'coverage',
-];
+import { IGNORE_DIR_NAMES } from '../utils/ignore';
+
+const IGNORE_DIRS = IGNORE_DIR_NAMES;
 
 interface TreeNode {
   name: string;

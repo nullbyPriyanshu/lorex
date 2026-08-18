@@ -1,6 +1,10 @@
 import fs from 'fs';
 import path from 'path';
 import { glob } from 'glob';
+import ts from 'typescript';
+import { readFileContent } from '../utils/typescript';
+import { joinRoutePaths } from '../utils/paths';
+import { dedupeStrings } from '../utils/dedupe';
 
 export interface ApiRoute {
   path: string;
@@ -13,235 +17,303 @@ export interface NextJsRoutes {
   apiRoutes: ApiRoute[];
   middlewarePath?: string;
   middlewareMatchers?: string[];
+  routerMode: Array<'app' | 'pages'>;
 }
 
-/**
- * Parse the handler function to extract destructured fields from request.json()
- * Handles multiple patterns:
- * - const { name, email } = await request.json()
- * - const body = await request.json(); body.name, body.email
- * - const data = await req.json()
- * - zod schema z.object({ name, email })
- */
+const HTTP_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'] as const;
+
 function extractRequestBodyFields(fileContent: string): string[] {
-  const fields: Set<string> = new Set();
+  const fields = new Set<string>();
 
-  try {
-    // Pattern 1: const { name, email } = await request.json()
-    const destructurePattern = /const\s+\{\s*([^}]+)\s*\}\s*=\s*await\s+(?:req|request)\.json\(\)/g;
-    let match = destructurePattern.exec(fileContent);
-    while (match) {
-      const fieldString = match[1];
-      fieldString.split(',').forEach((f) => {
-        const field = f.trim();
-        if (field && !field.includes('=')) {
-          fields.add(field);
-        }
-      });
-      match = destructurePattern.exec(fileContent);
-    }
-
-    // Pattern 2: const body = await request.json(); then body.field access
-    const bodyVarPattern = /const\s+(\w+)\s*=\s*await\s+(?:req|request)\.json\(\)/;
-    const bodyVarMatch = bodyVarPattern.exec(fileContent);
-    if (bodyVarMatch) {
-      const varName = bodyVarMatch[1];
-      const fieldAccessPattern = new RegExp(`${varName}\\.([a-zA-Z_$][a-zA-Z0-9_$]*)`, 'g');
-      let fieldMatch = fieldAccessPattern.exec(fileContent);
-      while (fieldMatch) {
-        fields.add(fieldMatch[1]);
-        fieldMatch = fieldAccessPattern.exec(fileContent);
+  const destructurePattern = /const\s+\{\s*([^}]+)\s*\}\s*=\s*await\s+(?:req|request)\.json\(\)/g;
+  let match = destructurePattern.exec(fileContent);
+  while (match) {
+    match[1].split(',').forEach((field) => {
+      const trimmed = field.trim();
+      if (trimmed && !trimmed.includes('=')) {
+        fields.add(trimmed);
       }
-    }
-
-    // Pattern 3: zod schema validation z.object({ name, email, ... })
-    const zodPattern = /z\.object\(\s*\{\s*([^}]+)\}/;
-    const zodMatch = zodPattern.exec(fileContent);
-    if (zodMatch) {
-      const fieldString = zodMatch[1];
-      fieldString.split(',').forEach((f) => {
-        const field = f.trim();
-        // Extract field name (before : or optional modifier)
-        const fieldName = field.match(/^([a-zA-Z_$][a-zA-Z0-9_$]*)/)?.[1];
-        if (fieldName) {
-          fields.add(fieldName);
-        }
-      });
-    }
-
-    // Pattern 4: const data = await req.json() (or similar variations)
-    const simplePattern = /const\s+(\w+)\s*=\s*await\s+(?:req\.json\(\)|request\.body)/;
-    const simpleMatch = simplePattern.exec(fileContent);
-    if (simpleMatch && fields.size === 0) {
-      // If we still have no fields and found a body variable, mark as "unknown"
-      // but we prefer to return empty array to put "body: unknown" in caller
-    }
-
-    return Array.from(fields);
-  } catch {
-    return [];
+    });
+    match = destructurePattern.exec(fileContent);
   }
+
+  const zodMatch = /z\.object\(\s*\{\s*([^}]+)\}/.exec(fileContent);
+  if (zodMatch) {
+    zodMatch[1].split(',').forEach((field) => {
+      const fieldName = field.trim().match(/^([a-zA-Z_$][a-zA-Z0-9_$]*)/)?.[1];
+      if (fieldName) fields.add(fieldName);
+    });
+  }
+
+  return Array.from(fields);
 }
 
-/**
- * Extract HTTP methods exported from a route handler
- */
-function extractHttpMethods(fileContent: string): string[] {
+function extractAppRouterMethods(fileContent: string): string[] {
   const methods: string[] = [];
-  const methodNames = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'];
-
-  for (const method of methodNames) {
-    // Match: export const GET = ...
-    // Match: export const POST = async (req, res) => ...
+  for (const method of HTTP_METHODS) {
     if (
       new RegExp(`export\\s+const\\s+${method}\\s*=`).test(fileContent) ||
-      new RegExp(`export\\s+(?:async\\s+)?function\\s+${method}`).test(
-        fileContent
-      )
+      new RegExp(`export\\s+(?:async\\s+)?function\\s+${method}\\b`).test(fileContent)
     ) {
       methods.push(method);
     }
   }
-
   return methods;
 }
 
-/**
- * Normalize the route path from file path
- */
-function normalizeRoutePath(filePath: string, baseDir: string): string {
-  // Remove the route.ts/route.js extension
-  let normalized = filePath
-    .replace(/route\.(ts|tsx|js|jsx)$/, '')
-    .replace(/\\/g, '/');
+function extractPagesRouterMethods(fileContent: string): string[] {
+  const methods = new Set<string>();
 
-  // Remove base directory
-  if (normalized.startsWith(baseDir)) {
-    normalized = normalized.substring(baseDir.length);
+  for (const method of HTTP_METHODS) {
+    const checks = [
+      new RegExp(`req\\.method\\s*===\\s*['"]${method}['"]`, 'i'),
+      new RegExp(`method\\s*===\\s*['"]${method}['"]`, 'i'),
+      new RegExp(`case\\s*['"]${method}['"]`, 'i'),
+    ];
+    if (checks.some((pattern) => pattern.test(fileContent))) {
+      methods.add(method);
+    }
   }
 
-  // Remove leading/trailing slashes
-  normalized = normalized.replace(/^\/+|\/+$/g, '');
-
-  if (normalized === '') {
-    return '/api';
+  if (methods.size === 0) {
+    methods.add('GET');
   }
 
-  return '/api/' + normalized;
+  return Array.from(methods);
 }
 
-/**
- * Scan Next.js App Router for page routes and API endpoints
- */
-export async function scanNextJsRoutes(): Promise<NextJsRoutes> {
-  const cwd = process.cwd();
-  const appPath = path.join(cwd, 'app');
+function normalizeAppSegment(segment: string): string | null {
+  if (!segment) return null;
+
+  if (segment.startsWith('@')) {
+    return null;
+  }
+
+  if (segment.startsWith('(') && segment.endsWith(')')) {
+    return null;
+  }
+
+  if (/^\(\./.test(segment)) {
+    return null;
+  }
+
+  return segment;
+}
+
+function filePathToAppRoute(relativePath: string, fileType: 'page' | 'route'): string {
+  const withoutFile = relativePath
+    .replace(/\/(page|route)\.(tsx?|jsx?)$/, '')
+    .replace(/\\/g, '/');
+
+  const segments = withoutFile.split('/').filter(Boolean);
+  const routeSegments = segments
+    .map(normalizeAppSegment)
+    .filter((segment): segment is string => Boolean(segment));
+
+  if (routeSegments.length === 0) {
+    return fileType === 'route' ? '/api' : '/';
+  }
+
+  if (fileType === 'route' && routeSegments[0] === 'api') {
+    const apiSegments = routeSegments.slice(1);
+    return apiSegments.length === 0 ? '/api' : joinRoutePaths('/api', ...apiSegments);
+  }
+
+  return joinRoutePaths(...routeSegments);
+}
+
+function pagesFileToRoute(relativePath: string): { path: string; isApi: boolean } {
+  const routePath = relativePath
+    .replace(/\.(tsx?|jsx?)$/, '')
+    .replace(/\\/g, '/')
+    .replace(/\/index$/, '');
+
+  if (routePath.startsWith('api/') || routePath === 'api') {
+    const apiPath = routePath.replace(/^api\/?/, '');
+    return {
+      path: apiPath ? joinRoutePaths('/api', apiPath) : '/api',
+      isApi: true,
+    };
+  }
+
+  return {
+    path: routePath ? joinRoutePaths(routePath) : '/',
+    isApi: false,
+  };
+}
+
+function isSpecialPagesFile(filename: string): boolean {
+  const basename = path.basename(filename, path.extname(filename));
+  return basename.startsWith('_');
+}
+
+async function scanAppRouter(appPath: string): Promise<NextJsRoutes> {
   const result: NextJsRoutes = {
     pageRoutes: [],
     apiRoutes: [],
+    routerMode: ['app'],
   };
 
-  if (!fs.existsSync(appPath)) {
-    return result;
+  const pageFiles = await glob('**/page.{ts,tsx,js,jsx}', {
+    cwd: appPath,
+    ignore: ['**/node_modules/**', '**/.next/**'],
+  });
+
+  for (const file of pageFiles) {
+    result.pageRoutes.push(filePathToAppRoute(file, 'page'));
   }
 
-  try {
-    // Find all page.tsx/page.js files
-    const pageFiles = await glob('**/page.{ts,tsx,js,jsx}', {
-      cwd: appPath,
-      ignore: ['**/node_modules/**', '**/.next/**'],
+  const routeFiles = await glob('**/route.{ts,tsx,js,jsx}', {
+    cwd: appPath,
+    ignore: ['**/node_modules/**', '**/.next/**'],
+  });
+
+  for (const file of routeFiles) {
+    const filePath = path.join(appPath, file);
+    const content = readFileContent(filePath);
+    const routePath = filePathToAppRoute(file, 'route');
+    const methods = extractAppRouterMethods(content);
+    let requestBodyFields: string[] | undefined;
+
+    if (methods.some((method) => ['POST', 'PUT', 'PATCH'].includes(method))) {
+      const fields = extractRequestBodyFields(content);
+      requestBodyFields = fields.length > 0 ? fields : undefined;
+    }
+
+    result.apiRoutes.push({
+      path: routePath,
+      methods: methods.length > 0 ? methods : ['GET'],
+      requestBodyFields,
     });
-
-    for (const file of pageFiles) {
-      let routePath = file
-        .replace(/\/page\.(ts|tsx|js|jsx)$/, '')
-        .replace(/\\/g, '/');
-
-      // Handle route groups by keeping them in display but noting them
-      const hasRouteGroup = /\([^)]+\)/.test(routePath);
-      if (hasRouteGroup) {
-        // Keep the route but note it has a group
-        routePath = routePath.replace(/\/\([^)]+\)/g, '');
-      }
-
-      if (!routePath || routePath === '') {
-        result.pageRoutes.push('/');
-      } else {
-        result.pageRoutes.push('/' + routePath);
-      }
-    }
-
-    // Find all route.ts/route.js files in /app/api
-    const apiFiles = await glob('api/**/route.{ts,tsx,js,jsx}', {
-      cwd: appPath,
-      ignore: ['**/node_modules/**', '**/.next/**'],
-    });
-
-    for (const file of apiFiles) {
-      try {
-        const filePath = path.join(appPath, file);
-        const content = fs.readFileSync(filePath, 'utf-8');
-
-        // Extract route path
-        const routePath = normalizeRoutePath(file, '/api');
-
-        // Extract HTTP methods
-        const methods = extractHttpMethods(content);
-
-        // Extract request body fields for POST/PUT/PATCH
-        let requestBodyFields: string[] | undefined;
-        if (methods.some((m) => ['POST', 'PUT', 'PATCH'].includes(m)) && 
-            content.includes('json()')) {
-          const fields = extractRequestBodyFields(content);
-          requestBodyFields = fields.length > 0 ? fields : undefined;
-        }
-
-        result.apiRoutes.push({
-          path: routePath,
-          methods: methods.length > 0 ? methods : ['GET'], // Default to GET if no explicit methods found
-          requestBodyFields: requestBodyFields,
-        });
-      } catch (fileError) {
-        // Skip files that can't be read
-        continue;
-      }
-    }
-
-    // Scan for middleware.ts
-    const middlewarePath = path.join(appPath, '..', 'middleware.ts');
-    const middlewarePathAlt = path.join(appPath, '..', 'middleware.js');
-
-    if (fs.existsSync(middlewarePath)) {
-      result.middlewarePath = 'middleware.ts';
-      try {
-        const content = fs.readFileSync(middlewarePath, 'utf-8');
-        // Try to extract matcher config
-        const matcherMatch = content.match(
-          /matcher\s*:\s*\[([^\]]+)\]|export\s+const\s+config\s*=\s*\{[^}]*matcher[^}]*\}/
-        );
-        if (matcherMatch) {
-          const matcherString = matcherMatch[1] || matcherMatch[0];
-          const paths = matcherString.match(/['"](.*?)['"]/g);
-          if (paths) {
-            result.middlewareMatchers = paths.map((p) =>
-              p.replace(/['"]/g, '')
-            );
-          }
-        }
-      } catch {
-        // Ignore middleware parsing errors
-      }
-    } else if (fs.existsSync(middlewarePathAlt)) {
-      result.middlewarePath = 'middleware.js';
-    }
-
-    // Sort routes for consistent output
-    result.pageRoutes.sort();
-    result.apiRoutes.sort((a, b) => a.path.localeCompare(b.path));
-
-    return result;
-  } catch (error) {
-    console.error('Error scanning Next.js routes:', error);
-    return result;
   }
+
+  return result;
+}
+
+async function scanPagesRouter(pagesPath: string): Promise<NextJsRoutes> {
+  const result: NextJsRoutes = {
+    pageRoutes: [],
+    apiRoutes: [],
+    routerMode: ['pages'],
+  };
+
+  const files = await glob('**/*.{tsx,ts,jsx,js}', {
+    cwd: pagesPath,
+    ignore: ['**/node_modules/**', '**/.next/**'],
+  });
+
+  for (const file of files) {
+    if (isSpecialPagesFile(file)) continue;
+
+    const { path: routePath, isApi } = pagesFileToRoute(file);
+    const filePath = path.join(pagesPath, file);
+
+    if (isApi) {
+      const content = readFileContent(filePath);
+      const methods = extractPagesRouterMethods(content);
+      let requestBodyFields: string[] | undefined;
+
+      if (methods.some((method) => ['POST', 'PUT', 'PATCH'].includes(method))) {
+        const fields = extractRequestBodyFields(content);
+        requestBodyFields = fields.length > 0 ? fields : undefined;
+      }
+
+      result.apiRoutes.push({
+        path: routePath,
+        methods,
+        requestBodyFields,
+      });
+    } else {
+      result.pageRoutes.push(routePath);
+    }
+  }
+
+  return result;
+}
+
+function scanMiddleware(projectRoot: string, result: NextJsRoutes): void {
+  for (const filename of ['middleware.ts', 'middleware.js']) {
+    const middlewarePath = path.join(projectRoot, filename);
+    if (!fs.existsSync(middlewarePath)) continue;
+
+    result.middlewarePath = filename;
+    try {
+      const content = readFileContent(middlewarePath);
+      const matcherMatch = content.match(/matcher\s*:\s*\[([^\]]+)\]/);
+      if (matcherMatch) {
+        const paths = matcherMatch[1].match(/['"](.*?)['"]/g);
+        if (paths) {
+          result.middlewareMatchers = paths.map((entry) => entry.replace(/['"]/g, ''));
+        }
+      }
+    } catch {
+      // ignore
+    }
+    break;
+  }
+}
+
+export async function scanNextJsRoutes(): Promise<NextJsRoutes> {
+  const cwd = process.cwd();
+  const appPath = path.join(cwd, 'app');
+  const pagesPath = path.join(cwd, 'pages');
+
+  const merged: NextJsRoutes = {
+    pageRoutes: [],
+    apiRoutes: [],
+    routerMode: [],
+  };
+
+  if (fs.existsSync(appPath)) {
+    const appRoutes = await scanAppRouter(appPath);
+    merged.pageRoutes.push(...appRoutes.pageRoutes);
+    merged.apiRoutes.push(...appRoutes.apiRoutes);
+    merged.routerMode.push('app');
+  }
+
+  if (fs.existsSync(pagesPath)) {
+    const pagesRoutes = await scanPagesRouter(pagesPath);
+    merged.pageRoutes.push(...pagesRoutes.pageRoutes);
+    merged.apiRoutes.push(...pagesRoutes.apiRoutes);
+    merged.routerMode.push('pages');
+  }
+
+  scanMiddleware(cwd, merged);
+
+  merged.pageRoutes = dedupeStrings(merged.pageRoutes).sort();
+  merged.apiRoutes.sort((a, b) => a.path.localeCompare(b.path));
+
+  return merged;
+}
+
+export function detectNextJsProject(deps: Record<string, string>): boolean {
+  return Boolean(deps.next);
+}
+
+export function hasUseClientDirective(content: string, filename = 'component.tsx'): boolean {
+  const scriptKind = filename.endsWith('.tsx') || filename.endsWith('.jsx')
+    ? ts.ScriptKind.TSX
+    : ts.ScriptKind.TS;
+  const sourceFile = ts.createSourceFile(
+    filename,
+    content,
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKind
+  );
+
+  for (const statement of sourceFile.statements) {
+    if (ts.isExpressionStatement(statement)) {
+      const expression = statement.expression;
+      if (
+        ts.isStringLiteral(expression) ||
+        ts.isNoSubstitutionTemplateLiteral(expression)
+      ) {
+        return expression.text === 'use client';
+      }
+      break;
+    }
+  }
+
+  return false;
 }

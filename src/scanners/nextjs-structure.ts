@@ -1,21 +1,8 @@
 import fs from 'fs';
 import path from 'path';
+import { IGNORE_DIR_NAMES } from '../utils/ignore';
 
-const IGNORE_DIRS = [
-  'node_modules',
-  '.git',
-  '.next',
-  'dist',
-  'build',
-  '.cache',
-  'coverage',
-  '.vercel',
-  '.turbo',
-  '__pycache__',
-  '.pytest_cache',
-  '.venv',
-  'venv',
-];
+const IGNORE_DIRS = [...IGNORE_DIR_NAMES, '.cache', '.vercel', '__pycache__', '.pytest_cache', '.venv', 'venv'];
 
 interface TreeNode {
   name: string;
